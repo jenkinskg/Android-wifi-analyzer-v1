@@ -1,0 +1,52 @@
+name: Build both APKs
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'WiFiAnalyzerLauncher-AndroidStudio.zip'
+      - 'WiFiAnalyzerStandalone-AndroidStudio.zip'
+      - '.github/workflows/build-apks.yml'
+
+jobs:
+  launcher:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Extract launcher project
+        run: unzip -q WiFiAnalyzerLauncher-AndroidStudio.zip
+      - name: Build launcher APK
+        working-directory: WiFiAnalyzerLauncher
+        run: gradle assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WiFiAnalyzerLauncher-debug-apk
+          path: WiFiAnalyzerLauncher/app/build/outputs/apk/debug/app-debug.apk
+
+  standalone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Extract standalone project
+        run: unzip -q WiFiAnalyzerStandalone-AndroidStudio.zip
+      - name: Build standalone APK
+        working-directory: WiFiAnalyzerStandalone
+        run: gradle assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WiFiAnalyzerStandalone-debug-apk
+          path: WiFiAnalyzerStandalone/app/build/outputs/apk/debug/app-debug.apk

@@ -18,8 +18,9 @@ jobs:
       - name: Reassemble Pings project
         shell: bash
         run: |
-          cat pings-build/chunk-aa.b64 pings-build/chunk-ab.b64 pings-build/chunk-ac.b64 pings-build/chunk-ad.b64 pings-build/chunk-ae.b64 pings-build/chunk-af.b64 pings-build/chunk-ag.b64 > /tmp/pings.zip.b64
+          cat pings-build/chunk-aa.b64 pings-build/chunk-ab.b64 pings-build/chunk-ac.b64 pings-build/chunk-ad.b64 pings-build/chunk-ae0.b64 pings-build/chunk-ae1.b64 pings-build/chunk-ae2.b64 pings-build/chunk-af.b64 pings-build/chunk-ag.b64 > /tmp/pings.zip.b64
           base64 --decode /tmp/pings.zip.b64 > /tmp/Pings-Android-v0.1.zip
+          unzip -t /tmp/Pings-Android-v0.1.zip
           unzip -q /tmp/Pings-Android-v0.1.zip -d "$GITHUB_WORKSPACE/pings-work"
           test -f "$GITHUB_WORKSPACE/pings-work/Pings-Android-v0.1/settings.gradle.kts"
 

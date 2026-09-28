@@ -49,5 +49,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Pings-v0.2-debug-apk
-          path: Pings-v0.1-debug.apk
+          path: Pings-v0.2-debug.apk
           if-no-files-found: error

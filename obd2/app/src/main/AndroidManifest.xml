@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
@@ -9,6 +10,8 @@
         android:allowBackup="true"
         android:label="OBD2 Multi-Vehicle"
         android:theme="@style/AppTheme">
+        <activity android:name=".TuneActivity" android:exported="false" />
+        <activity android:name=".UsbDevicePickerActivity" android:exported="false" />
         <activity android:name=".EnhancedActivity" android:exported="false" />
         <activity android:name=".LiveDataActivity" android:exported="false" />
         <activity android:name=".DtcActivity" android:exported="false" />

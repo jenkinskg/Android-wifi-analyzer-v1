@@ -9,8 +9,11 @@ android {
         applicationId = "com.keith.obd2scanner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2"
+        versionCode = 3
+        versionName = "0.3"
     }
+}
+dependencies {
+    implementation("com.github.mik3y:usb-serial-for-android:3.11.0")
 }
 kotlin { jvmToolchain(17) }

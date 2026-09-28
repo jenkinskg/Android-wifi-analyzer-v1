@@ -24,7 +24,7 @@ jobs:
         run: unzip -q WiFiAnalyzerLauncher-AndroidStudio.zip
       - name: Build launcher APK
         working-directory: WiFiAnalyzerLauncher
-        run: gradle assembleDebug -Pandroid.useAndroidX=true
+        run: gradle assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: WiFiAnalyzerLauncher-debug-apk
@@ -45,7 +45,7 @@ jobs:
         run: unzip -q WiFiAnalyzerStandalone-AndroidStudio.zip
       - name: Build standalone APK
         working-directory: WiFiAnalyzerStandalone
-        run: gradle assembleDebug
+        run: gradle assembleDebug -Pandroid.useAndroidX=true
       - uses: actions/upload-artifact@v4
         with:
           name: WiFiAnalyzerStandalone-debug-apk

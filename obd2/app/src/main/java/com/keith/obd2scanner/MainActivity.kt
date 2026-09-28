@@ -109,7 +109,17 @@ data class ObdPid(val pid:Int,val name:String,val unit:String,val bytes:Int,val 
 
 data class ScanSnapshot(val time:Long,val profile:String,val vin:String,val current:List<String>,val pending:List<String>,val permanent:List<String>) {
     fun encode()=listOf(time.toString(),profile,vin,current.joinToString(","),pending.joinToString(","),permanent.joinToString(",")).joinToString("\n")
-    companion object { fun decode(s:String?):ScanSnapshot? { if(s.isNullOrBlank())return null; val p=s.split("\n"); if(p.size<6)return null; fun c(x:String)=if(x.isBlank()) emptyList() else x.split(","); return ScanSnapshot(p[0].toLongOrNull()?:0,p[1],p[2],c(p[3]),c(p[4]),c(p[5])) } }
+    companion object {
+        fun decode(s:String?): ScanSnapshot? {
+            if (s.isNullOrBlank()) return null
+            val p = s.split("\n")
+            if (p.size < 6) return null
+            fun codes(x:String): List<String> {
+                return if (x.isBlank()) emptyList() else x.split(",").filter { it.isNotBlank() }
+            }
+            return ScanSnapshot(p[0].toLongOrNull() ?: 0L, p[1], p[2], codes(p[3]), codes(p[4]), codes(p[5]))
+        }
+    }
 }
 
 object SnapshotStore {

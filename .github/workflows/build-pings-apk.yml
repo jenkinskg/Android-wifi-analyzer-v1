@@ -1,0 +1,55 @@
+name: Build Pings APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "pings-build/**"
+      - ".github/workflows/build-pings-apk.yml"
+
+jobs:
+  build-pings:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Reassemble Pings project
+        shell: bash
+        run: |
+          cat pings-build/chunk-aa.b64 pings-build/chunk-ab.b64 pings-build/chunk-ac.b64 pings-build/chunk-ad.b64 pings-build/chunk-ae.b64 pings-build/chunk-af.b64 pings-build/chunk-ag.b64 > /tmp/pings.zip.b64
+          base64 --decode /tmp/pings.zip.b64 > /tmp/Pings-Android-v0.1.zip
+          unzip -q /tmp/Pings-Android-v0.1.zip -d "$GITHUB_WORKSPACE/pings-work"
+          test -f "$GITHUB_WORKSPACE/pings-work/Pings-Android-v0.1/settings.gradle.kts"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-37" "build-tools;36.0.0"
+
+      - name: Set up Gradle 9.6
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.6.0"
+
+      - name: Build Pings debug APK
+        working-directory: pings-work/Pings-Android-v0.1
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Rename APK
+        run: cp pings-work/Pings-Android-v0.1/app/build/outputs/apk/debug/app-debug.apk Pings-v0.1-debug.apk
+
+      - name: Upload Pings APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pings-v0.1-debug-apk
+          path: Pings-v0.1-debug.apk
+          if-no-files-found: error

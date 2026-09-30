@@ -1,0 +1,34 @@
+name: Build Pings Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "windows/Pings.Windows/**"
+      - ".github/workflows/build-pings-windows.yml"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Publish Pings single-file EXE
+        shell: pwsh
+        run: |
+          dotnet publish windows/Pings.Windows/Pings.Windows.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o windows/Pings.Windows/publish
+          if (!(Test-Path "windows/Pings.Windows/publish/Pings.exe")) { throw "Pings.exe not found" }
+
+      - name: Upload Pings EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pings-Windows-x64
+          path: windows/Pings.Windows/publish/Pings.exe
+          if-no-files-found: error

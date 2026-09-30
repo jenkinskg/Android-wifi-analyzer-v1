@@ -1,0 +1,44 @@
+name: Build WiFi Analyzer v4.1 Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - desktop-v4.1-build
+    paths:
+      - 'WiFiAnalyzerDesktop-v4.1-source.zip'
+      - '.github/workflows/build-desktop-v4.1.yml'
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Extract source
+        shell: pwsh
+        run: Expand-Archive -Path WiFiAnalyzerDesktop-v4.1-source.zip -DestinationPath desktop-v4.1 -Force
+      - name: Build Windows EXE
+        shell: pwsh
+        working-directory: desktop-v4.1
+        run: .\build_windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WiFiAnalyzer-v4.1-Windows-EXE
+          path: desktop-v4.1/dist/WiFiAnalyzer-v4.1.exe
+
+  debian:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract source
+        run: mkdir -p desktop-v4.1 && unzip -q WiFiAnalyzerDesktop-v4.1-source.zip -d desktop-v4.1
+      - name: Build Debian package
+        working-directory: desktop-v4.1
+        run: ./build_debian.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WiFiAnalyzer-v4.1-Debian-DEB
+          path: desktop-v4.1/WiFiAnalyzer-v4.1-Debian.deb

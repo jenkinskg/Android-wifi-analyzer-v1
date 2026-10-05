@@ -12,11 +12,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract source
+      - name: Rebuild source ZIP from base64
         run: |
+          base64 -d CYD-WiFi-Analyzer-SOURCE.b64 > CYD-WiFi-Analyzer-SOURCE-fixed.zip
+          unzip -t CYD-WiFi-Analyzer-SOURCE-fixed.zip
           rm -rf source
           mkdir source
-          unzip -q CYD-WiFi-Analyzer-SOURCE.zip -d source
+          unzip -q CYD-WiFi-Analyzer-SOURCE-fixed.zip -d source
 
       - name: Set up Arduino CLI
         uses: arduino/setup-arduino-cli@v2

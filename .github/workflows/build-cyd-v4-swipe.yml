@@ -1,0 +1,75 @@
+name: Build CYD WiFi Analyzer v4 Swipe
+
+on:
+  push:
+    branches: [cyd-wifi-analyzer]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rebuild base source
+        run: |
+          base64 -d CYD-WiFi-Analyzer-SOURCE.b64 > source.zip
+          rm -rf source && mkdir source
+          unzip -q source.zip -d source
+
+      - name: Apply ST7789 and v4 swipe patches
+        run: |
+          cd source/CYD-WiFi-Analyzer/CYD-WiFi-Analyzer
+          patch CYD-WiFi-Analyzer.ino < ../../../cyd-v3-st7789.patch
+          patch CYD-WiFi-Analyzer.ino < ../../../cyd-v4-swipe.patch
+          grep -n "v0.4 ST7789 SWIPE" CYD-WiFi-Analyzer.ino
+          grep -n "keijenkins@montefiore.org" CYD-WiFi-Analyzer.ino
+          grep -n "jenkinskg@gmail.com" CYD-WiFi-Analyzer.ino
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 core
+        run: |
+          arduino-cli config init
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+
+      - name: Install libraries
+        run: |
+          arduino-cli lib update-index
+          arduino-cli lib install "Adafruit GFX Library"
+          arduino-cli lib install "Adafruit ST7735 and ST7789 Library"
+
+      - name: Compile
+        run: |
+          mkdir -p build
+          arduino-cli compile --fqbn esp32:esp32:esp32 --output-dir build source/CYD-WiFi-Analyzer/CYD-WiFi-Analyzer
+
+      - name: Prepare flash files
+        run: |
+          set -euxo pipefail
+          cp build/CYD-WiFi-Analyzer.ino.bin build/CYD-WiFi-Analyzer-v4-ST7789-SWIPE.bin
+          cp build/CYD-WiFi-Analyzer.ino.bootloader.bin build/bootloader.bin
+          cp build/CYD-WiFi-Analyzer.ino.partitions.bin build/partitions.bin
+          BOOTAPP=$(find ~/.arduino15/packages/esp32/hardware/esp32 -path '*/tools/partitions/boot_app0.bin' | head -n 1)
+          cp "$BOOTAPP" build/boot_app0.bin
+          python3 -m pip install 'esptool==4.8.1'
+          python3 -m esptool --chip esp32 merge_bin             -o build/CYD-WiFi-Analyzer-v4-ST7789-SWIPE-MERGED.bin             0x1000 build/bootloader.bin             0x8000 build/partitions.bin             0xE000 build/boot_app0.bin             0x10000 build/CYD-WiFi-Analyzer-v4-ST7789-SWIPE.bin
+          cp source/CYD-WiFi-Analyzer/CYD-WiFi-Analyzer/CYD-WiFi-Analyzer.ino build/CYD-WiFi-Analyzer-v4-ST7789-SWIPE.ino
+          cat > build/wifi_analyzer.cfg <<'EOF'
+          # CYD WiFi Analyzer v0.4 email configuration
+          # Fill in your 2.4 GHz Wi-Fi credentials and Gmail App Password.
+          WIFI_SSID=
+          WIFI_PASSWORD=
+          SMTP_HOST=smtp.gmail.com
+          SMTP_PORT=465
+          SMTP_USER=jenkinskg@gmail.com
+          SMTP_APP_PASSWORD=
+          EMAIL_TO=keijenkins@montefiore.org
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CYD-WiFi-Analyzer-v4-ST7789-SWIPE
+          path: build/
+          retention-days: 30

@@ -1,0 +1,289 @@
+--- CYD-WiFi-Analyzer/CYD-WiFi-Analyzer/CYD-WiFi-Analyzer.ino	2026-10-05 16:12:29.047505252 +0000
++++ CYD-WiFi-Analyzer-v2/CYD-WiFi-Analyzer-v2/CYD-WiFi-Analyzer-v2.ino	2026-10-05 17:02:21.870089444 +0000
+@@ -1,5 +1,5 @@
+ /*
+-  CYD WiFi Analyzer v0.1
++  CYD WiFi Analyzer v0.2 LANDSCAPE
+   Target: ESP32-2432S028R "Cheap Yellow Display" (original ESP32, 2.8" 320x240)
+ 
+   Features:
+@@ -83,7 +83,7 @@
+ APInfo aps[MAX_APS];
+ int apCount = 0;
+ int selectedIndex = -1;
+-int listPage = 0;
++int listOffset = 0;
+ bool channelView = false;
+ unsigned long lastScanMs = 0;
+ static constexpr unsigned long AUTO_SCAN_MS = 10000;
+@@ -433,7 +433,7 @@
+   sortAPsByRSSI();
+   if (selectedIndex >= apCount) selectedIndex = -1;
+   int maxPage = apCount > 0 ? (apCount - 1) / 6 : 0;
+-  if (listPage > maxPage) listPage = 0;
++  if (listOffset > max(0, apCount - 1)) listOffset = max(0, apCount - 1);
+   lastScanMs = millis();
+ }
+ 
+@@ -615,62 +615,86 @@
+ }
+ 
+ // ---------- UI ----------
++static constexpr int HEADER_H = 28;
++static constexpr int LIST_TOP = 30;
++static constexpr int ROW_H = 28;
++static constexpr int VISIBLE_ROWS = 6;
++static constexpr int STATUS_Y = 199;
++static constexpr int BUTTON_Y = 210;
++static constexpr int BUTTON_H = 28;
++
+ void drawButton(int x, int w, const char *label) {
+-  tft.fillRoundRect(x + 1, 210, w - 2, 28, 4, C_BUTTON);
+-  tft.drawRoundRect(x + 1, 210, w - 2, 28, 4, C_DIM);
++  tft.fillRoundRect(x + 1, BUTTON_Y, w - 2, BUTTON_H, 4, C_BUTTON);
++  tft.drawRoundRect(x + 1, BUTTON_Y, w - 2, BUTTON_H, 4, C_DIM);
+   tft.setTextColor(C_FG, C_BUTTON);
+   tft.setTextSize(1);
+   int16_t bx, by; uint16_t tw, th;
+   tft.getTextBounds(label, 0, 0, &bx, &by, &tw, &th);
+-  tft.setCursor(x + (w - tw) / 2, 220);
++  tft.setCursor(x + (w - tw) / 2, BUTTON_Y + 10);
+   tft.print(label);
+ }
+ 
+ void drawButtons() {
+   const int w = 53;
+   drawButton(0 * w, w, "SCAN");
+-  drawButton(1 * w, w, "PAGE");
+-  drawButton(2 * w, w, channelView ? "LIST" : "CHAN");
+-  drawButton(3 * w, w, "SAVE");
+-  drawButton(4 * w, w, "EMAIL");
+-  drawButton(5 * w, 55, "LABEL");
++  drawButton(1 * w, w, "UP");
++  drawButton(2 * w, w, "DOWN");
++  drawButton(3 * w, w, channelView ? "LIST" : "CHAN");
++  drawButton(4 * w, w, "SAVE");
++  drawButton(5 * w, 55, "EMAIL");
+ }
+ 
+ void drawHeader() {
+-  tft.fillRect(0, 0, SCREEN_W, 28, ILI9341_NAVY);
++  tft.fillRect(0, 0, SCREEN_W, HEADER_H, ILI9341_NAVY);
+   tft.setTextColor(C_FG, ILI9341_NAVY);
+   tft.setTextSize(2);
+   tft.setCursor(4, 4);
+   tft.print("WiFi Analyzer");
+   tft.setTextSize(1);
+-  tft.setCursor(205, 5);
++  tft.setCursor(216, 5);
+   tft.print(apCount);
+   tft.print(" APs");
+-  tft.setCursor(205, 16);
++  tft.setCursor(216, 16);
+   tft.print(sdReady ? "SD:OK" : "SD:--");
+ }
+ 
++void clampListOffset() {
++  int maxOffset = max(0, apCount - VISIBLE_ROWS);
++  if (listOffset < 0) listOffset = 0;
++  if (listOffset > maxOffset) listOffset = maxOffset;
++}
++
++void scrollList(int delta) {
++  listOffset += delta;
++  clampListOffset();
++}
++
+ void drawList() {
+   tft.fillScreen(C_BG);
+   drawHeader();
+-  int start = listPage * 6;
+-  for (int row = 0; row < 6; ++row) {
+-    int i = start + row;
+-    int y = 30 + row * 29;
++  clampListOffset();
++
++  for (int row = 0; row < VISIBLE_ROWS; ++row) {
++    int i = listOffset + row;
++    int y = LIST_TOP + row * ROW_H;
+     if (i >= apCount) break;
++
+     uint16_t bg = (i == selectedIndex) ? C_SELECT : C_BG;
+-    tft.fillRect(0, y, SCREEN_W, 28, bg);
++    tft.fillRect(0, y, SCREEN_W, ROW_H - 1, bg);
++
+     tft.setTextSize(1);
+     tft.setTextColor(C_FG, bg);
+     tft.setCursor(4, y + 2);
+     tft.print(shortText(aps[i].ssid, 22));
++
+     if (aps[i].label.length()) {
+       tft.setTextColor(C_ACCENT, bg);
+       tft.setCursor(150, y + 2);
+       tft.print(shortText(aps[i].label, 10));
+     }
++
+     tft.setTextColor(rssiColor(aps[i].rssi), bg);
+-    tft.setCursor(264, y + 2);
++    tft.setCursor(265, y + 2);
+     tft.print(aps[i].rssi);
+     tft.print("dB");
+ 
+@@ -682,11 +706,24 @@
+     tft.setCursor(190, y + 15);
+     tft.print(authName(aps[i].auth));
+   }
+-  int maxPage = apCount > 0 ? (apCount - 1) / 6 : 0;
++
++  tft.fillRect(0, STATUS_Y, SCREEN_W, 10, C_BG);
+   tft.setTextColor(C_DIM, C_BG);
+   tft.setTextSize(1);
+-  tft.setCursor(4, 201);
+-  tft.print("Page "); tft.print(listPage + 1); tft.print('/'); tft.print(maxPage + 1);
++  tft.setCursor(4, STATUS_Y);
++  if (apCount) {
++    int first = listOffset + 1;
++    int last = min(apCount, listOffset + VISIBLE_ROWS);
++    tft.print(first); tft.print("-"); tft.print(last); tft.print(" / "); tft.print(apCount);
++    tft.setCursor(110, STATUS_Y);
++    tft.print("Swipe list to scroll");
++    if (selectedIndex >= 0) {
++      tft.setCursor(245, STATUS_Y);
++      tft.print("Hold=Label");
++    }
++  } else {
++    tft.print("No APs found");
++  }
+   drawButtons();
+ }
+ 
+@@ -742,28 +779,29 @@
+   switch (index) {
+     case 0:
+       performScan();
++      clampListOffset();
+       redraw();
+       break;
+-    case 1: {
+-      if (!channelView) {
+-        int maxPage = apCount > 0 ? (apCount - 1) / 6 : 0;
+-        listPage = (listPage + 1) % (maxPage + 1);
+-      }
++    case 1:
++      if (!channelView) scrollList(-1);
+       redraw();
+       break;
+-    }
+     case 2:
++      if (!channelView) scrollList(1);
++      redraw();
++      break;
++    case 3:
+       channelView = !channelView;
+       redraw();
+       break;
+-    case 3: {
++    case 4: {
+       String name;
+       if (saveCsv(name)) showMessage("Saved " + name, "CSV on microSD", C_GOOD, 1200);
+       else showMessage("Save failed", sdReady ? "Check microSD" : "No microSD detected", C_BAD, 1400);
+       redraw();
+       break;
+     }
+-    case 4: {
++    case 5: {
+       showMessage("Sending email...", cfgEmailTo.length() ? cfgEmailTo : "Need wifi_analyzer.cfg", C_WARN, 500);
+       String err;
+       if (sendEmailReport(err)) showMessage("Email sent", cfgEmailTo, C_GOOD, 1400);
+@@ -771,31 +809,58 @@
+       redraw();
+       break;
+     }
+-    case 5:
+-      cycleSelectedLabel();
+-      redraw();
+-      break;
+   }
+ }
+ 
+ void handleTouch() {
+-  int x, y;
+-  if (!readTouchScreen(x, y)) return;
+-  delay(40);
+-
+-  if (y >= 208) {
+-    handleButton(x);
+-  } else if (!channelView && y >= 30 && y < 204) {
+-    int row = (y - 30) / 29;
+-    if (row >= 0 && row < 6) {
+-      int idx = listPage * 6 + row;
+-      if (idx < apCount) selectedIndex = idx;
++  int startX, startY;
++  if (!readTouchScreen(startX, startY)) return;
++
++  unsigned long pressStart = millis();
++  int lastX = startX, lastY = startY;
++  while (digitalRead(TOUCH_IRQ) == LOW) {
++    int tx, ty;
++    if (readTouchScreen(tx, ty)) {
++      lastX = tx;
++      lastY = ty;
++    }
++    delay(12);
++  }
++  unsigned long heldMs = millis() - pressStart;
++
++  if (startY >= BUTTON_Y - 2) {
++    handleButton(startX);
++    delay(80);
++    return;
++  }
++
++  if (!channelView && startY >= LIST_TOP && startY < STATUS_Y) {
++    int dy = lastY - startY;
++
++    if (abs(dy) >= 22) {
++      int rows = max(1, abs(dy) / ROW_H);
++      scrollList(dy < 0 ? rows : -rows);
++      redraw();
++      delay(80);
++      return;
++    }
++
++    int row = (startY - LIST_TOP) / ROW_H;
++    if (row >= 0 && row < VISIBLE_ROWS) {
++      int idx = listOffset + row;
++      if (idx < apCount) {
++        selectedIndex = idx;
++        if (heldMs >= 650) cycleSelectedLabel();
++      }
+       redraw();
+     }
+   }
+ 
+-  while (digitalRead(TOUCH_IRQ) == LOW) delay(10);
+-  delay(60);
++  delay(80);
+ }
+ 
+ // ---------- Setup / loop ----------
+@@ -815,7 +880,9 @@
+ 
+   tftSPI.begin(TFT_SCK, TFT_MISO, TFT_MOSI, TFT_CS);
+   tft.begin(40000000);
+-  tft.setRotation(1);
++  // Corrected landscape orientation for the photographed CYD board.
++  // Rotation 3 is 320x240.
++  tft.setRotation(3);
+   tft.setTextWrap(false);
+   tft.fillScreen(C_BG);
+   tft.setTextColor(C_ACCENT, C_BG);
+@@ -825,7 +892,7 @@
+   tft.setTextSize(1);
+   tft.setTextColor(C_FG, C_BG);
+   tft.setCursor(72, 112);
+-  tft.print("v0.1 - ESP32 CYD");
++  tft.print("v0.2 LANDSCAPE - ESP32 CYD");
+ 
+   loadTouchCal();
+   delay(500);

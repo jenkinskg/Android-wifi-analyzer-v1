@@ -242,6 +242,7 @@
 +  if (!channelView && startY >= LIST_TOP && startY < STATUS_Y) {
 +    int dy = lastY - startY;
 +
++    // Finger moving upward reveals later APs; moving downward reveals earlier APs.
 +    if (abs(dy) >= 22) {
 +      int rows = max(1, abs(dy) / ROW_H);
 +      scrollList(dy < 0 ? rows : -rows);
@@ -255,7 +256,10 @@
 +      int idx = listOffset + row;
 +      if (idx < apCount) {
 +        selectedIndex = idx;
-+        if (heldMs >= 650) cycleSelectedLabel();
++        if (heldMs >= 650) {
++          // Long-press an AP to cycle its learned label.
++          cycleSelectedLabel();
++        }
 +      }
        redraw();
      }
@@ -272,8 +276,8 @@
    tftSPI.begin(TFT_SCK, TFT_MISO, TFT_MOSI, TFT_CS);
    tft.begin(40000000);
 -  tft.setRotation(1);
-+  // Corrected landscape orientation for the photographed CYD board.
-+  // Rotation 3 is 320x240.
++  // Force the opposite landscape rotation for this CYD panel revision.
++  // Rotation 3 is 320x240 and avoids the 80-pixel unused/garbage strip seen with v0.1.
 +  tft.setRotation(3);
    tft.setTextWrap(false);
    tft.fillScreen(C_BG);

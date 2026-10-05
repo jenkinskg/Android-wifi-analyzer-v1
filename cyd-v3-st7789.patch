@@ -1,5 +1,5 @@
 --- /mnt/data/CYD-WiFi-Analyzer/CYD-WiFi-Analyzer/CYD-WiFi-Analyzer.ino	2026-10-05 16:12:29.047505252 +0000
-+++ /mnt/data/CYD-WiFi-Analyzer-v3-ST7789/CYD-WiFi-Analyzer-v3-ST7789/CYD-WiFi-Analyzer-v3-ST7789.ino	2026-10-05 17:28:16.669869926 +0000
++++ /mnt/data/CYD-WiFi-Analyzer-v3-ST7789/CYD-WiFi-Analyzer-v3-ST7789/CYD-WiFi-Analyzer-v3-ST7789.ino	2026-10-05 17:31:08.106459842 +0000
 @@ -1,5 +1,5 @@
  /*
 -  CYD WiFi Analyzer v0.1
@@ -16,7 +16,7 @@
  
  // ---------- CYD hardware pins ----------
  static constexpr int TFT_SCK  = 14;
-@@ -55,7 +55,7 @@
+@@ -55,19 +55,20 @@
  
  SPIClass tftSPI(HSPI);
  SPIClass sdSPI(VSPI);
@@ -25,7 +25,26 @@
  Preferences prefs;
  
  // ---------- Colors ----------
-@@ -83,7 +83,7 @@
+-static constexpr uint16_t C_BG      = ILI9341_BLACK;
+-static constexpr uint16_t C_FG      = ILI9341_WHITE;
++static constexpr uint16_t C_BG      = ST77XX_BLACK;
++static constexpr uint16_t C_FG      = ST77XX_WHITE;
+ static constexpr uint16_t C_DIM     = 0x7BEF;
+-static constexpr uint16_t C_ACCENT  = ILI9341_CYAN;
+-static constexpr uint16_t C_GOOD    = ILI9341_GREEN;
+-static constexpr uint16_t C_WARN    = ILI9341_YELLOW;
+-static constexpr uint16_t C_BAD     = ILI9341_RED;
++static constexpr uint16_t C_ACCENT  = ST77XX_CYAN;
++static constexpr uint16_t C_GOOD    = ST77XX_GREEN;
++static constexpr uint16_t C_WARN    = ST77XX_YELLOW;
++static constexpr uint16_t C_BAD     = ST77XX_RED;
+ static constexpr uint16_t C_BUTTON  = 0x2124;
+ static constexpr uint16_t C_SELECT  = 0x39E7;
++static constexpr uint16_t C_NAVY    = 0x000F;
+ 
+ // ---------- Wi-Fi scan model ----------
+ struct APInfo {
+@@ -83,7 +84,7 @@
  APInfo aps[MAX_APS];
  int apCount = 0;
  int selectedIndex = -1;
@@ -34,7 +53,36 @@
  bool channelView = false;
  unsigned long lastScanMs = 0;
  static constexpr unsigned long AUTO_SCAN_MS = 10000;
-@@ -433,7 +433,7 @@
+@@ -166,14 +167,14 @@
+ }
+ 
+ void showMessage(const String &line1, const String &line2 = "", uint16_t color = C_FG, unsigned long ms = 1000) {
+-  tft.fillRect(12, 75, 296, 90, ILI9341_NAVY);
++  tft.fillRect(12, 75, 296, 90, C_NAVY);
+   tft.drawRect(12, 75, 296, 90, C_ACCENT);
+-  tft.setTextColor(color, ILI9341_NAVY);
++  tft.setTextColor(color, C_NAVY);
+   tft.setTextSize(2);
+   tft.setCursor(24, 92);
+   tft.print(shortText(line1, 24));
+   tft.setTextSize(1);
+-  tft.setTextColor(C_FG, ILI9341_NAVY);
++  tft.setTextColor(C_FG, C_NAVY);
+   tft.setCursor(24, 125);
+   tft.print(shortText(line2, 45));
+   delay(ms);
+@@ -408,8 +409,8 @@
+ }
+ 
+ void performScan() {
+-  tft.fillRect(0, 0, SCREEN_W, 24, ILI9341_NAVY);
+-  tft.setTextColor(C_WARN, ILI9341_NAVY);
++  tft.fillRect(0, 0, SCREEN_W, 24, C_NAVY);
++  tft.setTextColor(C_WARN, C_NAVY);
+   tft.setTextSize(2);
+   tft.setCursor(4, 4);
+   tft.print("Scanning WiFi...");
+@@ -433,7 +434,7 @@
    sortAPsByRSSI();
    if (selectedIndex >= apCount) selectedIndex = -1;
    int maxPage = apCount > 0 ? (apCount - 1) / 6 : 0;
@@ -43,7 +91,7 @@
    lastScanMs = millis();
  }
  
-@@ -615,78 +615,114 @@
+@@ -615,78 +616,114 @@
  }
  
  // ---------- UI ----------
@@ -86,8 +134,9 @@
  
  void drawHeader() {
 -  tft.fillRect(0, 0, SCREEN_W, 28, ILI9341_NAVY);
-+  tft.fillRect(0, 0, SCREEN_W, HEADER_H, ILI9341_NAVY);
-   tft.setTextColor(C_FG, ILI9341_NAVY);
+-  tft.setTextColor(C_FG, ILI9341_NAVY);
++  tft.fillRect(0, 0, SCREEN_W, HEADER_H, C_NAVY);
++  tft.setTextColor(C_FG, C_NAVY);
    tft.setTextSize(2);
    tft.setCursor(4, 4);
    tft.print("WiFi Analyzer");
@@ -185,7 +234,7 @@
    drawButtons();
  }
  
-@@ -742,28 +778,29 @@
+@@ -742,28 +779,29 @@
    switch (index) {
      case 0:
        performScan();
@@ -223,7 +272,7 @@
        showMessage("Sending email...", cfgEmailTo.length() ? cfgEmailTo : "Need wifi_analyzer.cfg", C_WARN, 500);
        String err;
        if (sendEmailReport(err)) showMessage("Email sent", cfgEmailTo, C_GOOD, 1400);
-@@ -771,31 +808,58 @@
+@@ -771,31 +809,58 @@
        redraw();
        break;
      }
@@ -299,7 +348,7 @@
  }
  
  // ---------- Setup / loop ----------
-@@ -814,8 +878,10 @@
+@@ -814,8 +879,10 @@
    pinMode(TOUCH_IRQ, INPUT);
  
    tftSPI.begin(TFT_SCK, TFT_MISO, TFT_MOSI, TFT_CS);
@@ -311,7 +360,7 @@
    tft.setTextWrap(false);
    tft.fillScreen(C_BG);
    tft.setTextColor(C_ACCENT, C_BG);
-@@ -825,7 +891,7 @@
+@@ -825,7 +892,7 @@
    tft.setTextSize(1);
    tft.setTextColor(C_FG, C_BG);
    tft.setCursor(72, 112);

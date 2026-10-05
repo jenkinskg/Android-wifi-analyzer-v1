@@ -1,0 +1,161 @@
+--- CYD-WiFi-Analyzer-v3-ST7789-LANDSCAPE.ino	2026-10-05 17:36:02.000000000 +0000
++++ CYD-WiFi-Analyzer-v4-ST7789-SWIPE.ino	2026-10-05 17:47:38.758558123 +0000
+@@ -1,5 +1,5 @@
+ /*
+-  CYD WiFi Analyzer v0.3 ST7789 LANDSCAPE
++  CYD WiFi Analyzer v0.4 ST7789 SWIPE
+   Target: ESP32-2432S028R "Cheap Yellow Display" (original ESP32, 2.8" 320x240)
+ 
+   Features:
+@@ -95,9 +95,9 @@
+ String cfgWifiPassword;
+ String cfgSmtpHost = "smtp.gmail.com";
+ uint16_t cfgSmtpPort = 465;
+-String cfgSmtpUser;
++String cfgSmtpUser = "jenkinskg@gmail.com";
+ String cfgSmtpPassword;
+-String cfgEmailTo;
++String cfgEmailTo = "keijenkins@montefiore.org";
+ 
+ // ---------- Touch calibration ----------
+ struct TouchCal {
+@@ -363,9 +363,9 @@
+   f.println("WIFI_PASSWORD=");
+   f.println("SMTP_HOST=smtp.gmail.com");
+   f.println("SMTP_PORT=465");
+-  f.println("SMTP_USER=");
++  f.println("SMTP_USER=jenkinskg@gmail.com");
+   f.println("SMTP_APP_PASSWORD=");
+-  f.println("EMAIL_TO=");
++  f.println("EMAIL_TO=keijenkins@montefiore.org");
+   f.close();
+ }
+ 
+@@ -386,9 +386,9 @@
+     else if (key == "WIFI_PASSWORD") cfgWifiPassword = val;
+     else if (key == "SMTP_HOST") cfgSmtpHost = val;
+     else if (key == "SMTP_PORT") cfgSmtpPort = (uint16_t)val.toInt();
+-    else if (key == "SMTP_USER") cfgSmtpUser = val;
++    else if (key == "SMTP_USER" && val.length()) cfgSmtpUser = val;
+     else if (key == "SMTP_APP_PASSWORD") cfgSmtpPassword = val;
+-    else if (key == "EMAIL_TO") cfgEmailTo = val;
++    else if (key == "EMAIL_TO" && val.length()) cfgEmailTo = val;
+   }
+   f.close();
+   cfgSmtpPassword.replace(" ", "");
+@@ -618,9 +618,9 @@
+ // ---------- UI ----------
+ static constexpr int HEADER_H = 28;
+ static constexpr int LIST_TOP = 30;
+-static constexpr int ROW_H = 40;
+-static constexpr int VISIBLE_ROWS = 4;
+-static constexpr int STATUS_Y = 193;
++static constexpr int ROW_H = 32;
++static constexpr int VISIBLE_ROWS = 5;
++static constexpr int STATUS_Y = 192;
+ static constexpr int BUTTON_Y = 210;
+ static constexpr int BUTTON_H = 28;
+ 
+@@ -636,13 +636,11 @@
+ }
+ 
+ void drawButtons() {
+-  const int w = 53;
++  const int w = 80;
+   drawButton(0 * w, w, "SCAN");
+-  drawButton(1 * w, w, "UP");
+-  drawButton(2 * w, w, "DOWN");
+-  drawButton(3 * w, w, channelView ? "LIST" : "CHAN");
+-  drawButton(4 * w, w, "SAVE");
+-  drawButton(5 * w, 55, "EMAIL");
++  drawButton(1 * w, w, channelView ? "LIST" : "CHAN");
++  drawButton(2 * w, w, "SAVE");
++  drawButton(3 * w, w, "EMAIL");
+ }
+ 
+ void drawHeader() {
+@@ -692,22 +690,22 @@
+     if (aps[i].label.length()) {
+       tft.setTextSize(1);
+       tft.setTextColor(C_ACCENT, bg);
+-      tft.setCursor(180, y + 5);
++      tft.setCursor(180, y + 4);
+       tft.print(shortText(aps[i].label, 9));
+     }
+ 
+     tft.setTextSize(1);
+     tft.setTextColor(rssiColor(aps[i].rssi), bg);
+-    tft.setCursor(270, y + 5);
++    tft.setCursor(270, y + 4);
+     tft.print(aps[i].rssi);
+     tft.print("dB");
+ 
+     tft.setTextColor(C_DIM, bg);
+-    tft.setCursor(4, y + 24);
++    tft.setCursor(4, y + 20);
+     tft.print(aps[i].bssid);
+-    tft.setCursor(150, y + 24);
++    tft.setCursor(150, y + 20);
+     tft.print("CH"); tft.print(aps[i].channel);
+-    tft.setCursor(195, y + 24);
++    tft.setCursor(195, y + 20);
+     tft.print(authName(aps[i].auth));
+   }
+ 
+@@ -720,7 +718,7 @@
+     int last = min(apCount, listOffset + VISIBLE_ROWS);
+     tft.print(first); tft.print("-"); tft.print(last); tft.print(" / "); tft.print(apCount);
+     tft.setCursor(105, STATUS_Y);
+-    tft.print("Swipe or UP/DOWN");
++    tft.print("Swipe list up/down");
+   } else {
+     tft.print("No APs found");
+   }
+@@ -775,7 +773,7 @@
+ }
+ 
+ void handleButton(int x) {
+-  int index = min(5, x / 53);
++  int index = min(3, x / 80);
+   switch (index) {
+     case 0:
+       performScan();
+@@ -783,26 +781,18 @@
+       redraw();
+       break;
+     case 1:
+-      if (!channelView) scrollList(-1);
+-      redraw();
+-      break;
+-    case 2:
+-      if (!channelView) scrollList(1);
+-      redraw();
+-      break;
+-    case 3:
+       channelView = !channelView;
+       redraw();
+       break;
+-    case 4: {
++    case 2: {
+       String name;
+       if (saveCsv(name)) showMessage("Saved " + name, "CSV on microSD", C_GOOD, 1200);
+       else showMessage("Save failed", sdReady ? "Check microSD" : "No microSD detected", C_BAD, 1400);
+       redraw();
+       break;
+     }
+-    case 5: {
+-      showMessage("Sending email...", cfgEmailTo.length() ? cfgEmailTo : "Need wifi_analyzer.cfg", C_WARN, 500);
++    case 3: {
++      showMessage("Sending email...", cfgEmailTo, C_WARN, 500);
+       String err;
+       if (sendEmailReport(err)) showMessage("Email sent", cfgEmailTo, C_GOOD, 1400);
+       else showMessage("Email failed", err, C_BAD, 1800);
+@@ -892,7 +882,7 @@
+   tft.setTextSize(1);
+   tft.setTextColor(C_FG, C_BG);
+   tft.setCursor(72, 112);
+-  tft.print("v0.3 ST7789 LANDSCAPE");
++  tft.print("v0.4 ST7789 SWIPE");
+ 
+   loadTouchCal();
+   delay(500);

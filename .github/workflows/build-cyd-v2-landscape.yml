@@ -1,0 +1,75 @@
+name: Build CYD WiFi Analyzer v2 Landscape
+
+on:
+  push:
+    branches: [cyd-wifi-analyzer]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rebuild source ZIP
+        run: |
+          base64 -d CYD-WiFi-Analyzer-SOURCE.b64 > source.zip
+          unzip -t source.zip
+          rm -rf source
+          mkdir source
+          unzip -q source.zip -d source
+
+      - name: Apply landscape scrolling patch
+        run: |
+          cd source/CYD-WiFi-Analyzer/CYD-WiFi-Analyzer
+          patch CYD-WiFi-Analyzer.ino < ../../../cyd-v2.patch
+          grep -n "v0.2 LANDSCAPE" CYD-WiFi-Analyzer.ino
+          grep -n "setRotation(3)" CYD-WiFi-Analyzer.ino
+
+      - name: Set up Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 core
+        run: |
+          arduino-cli config init
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+
+      - name: Install display libraries
+        run: |
+          arduino-cli lib update-index
+          arduino-cli lib install "Adafruit GFX Library"
+          arduino-cli lib install "Adafruit ILI9341"
+
+      - name: Compile ESP32 Dev Module
+        run: |
+          mkdir -p build
+          arduino-cli compile             --fqbn esp32:esp32:esp32             --output-dir build             source/CYD-WiFi-Analyzer/CYD-WiFi-Analyzer
+
+      - name: Prepare v2 flash files
+        run: |
+          set -euxo pipefail
+          cp build/CYD-WiFi-Analyzer.ino.bin build/CYD-WiFi-Analyzer-v2-LANDSCAPE.bin
+          cp build/CYD-WiFi-Analyzer.ino.bootloader.bin build/bootloader.bin
+          cp build/CYD-WiFi-Analyzer.ino.partitions.bin build/partitions.bin
+          BOOTAPP=$(find ~/.arduino15/packages/esp32/hardware/esp32 -path '*/tools/partitions/boot_app0.bin' | head -n 1)
+          test -n "$BOOTAPP"
+          cp "$BOOTAPP" build/boot_app0.bin
+
+      - name: Merge single-file v2 image
+        run: |
+          python3 -m pip install 'esptool==4.8.1'
+          python3 -m esptool --chip esp32 merge_bin             -o build/CYD-WiFi-Analyzer-v2-LANDSCAPE-MERGED.bin             0x1000 build/bootloader.bin             0x8000 build/partitions.bin             0xE000 build/boot_app0.bin             0x10000 build/CYD-WiFi-Analyzer-v2-LANDSCAPE.bin
+
+      - name: Add source and config
+        run: |
+          cp source/CYD-WiFi-Analyzer/CYD-WiFi-Analyzer/CYD-WiFi-Analyzer.ino build/CYD-WiFi-Analyzer-v2-LANDSCAPE.ino
+          cp source/CYD-WiFi-Analyzer/wifi_analyzer.cfg build/
+
+      - name: Upload v2 firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: CYD-WiFi-Analyzer-v2-LANDSCAPE
+          path: build/
+          retention-days: 30

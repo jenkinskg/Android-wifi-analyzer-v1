@@ -56,11 +56,11 @@ public class MainActivity extends Activity {
         main.setOrientation(LinearLayout.VERTICAL);
         main.setPadding(18,20,18,12);
         TextView heading = new TextView(this);
-        heading.setText("SWITCHFINDER V4 — EXPERIMENTAL");
+        heading.setText("SWITCHFINDER V5 — RX RESTART");
         heading.setTextSize(21);
         main.addView(heading);
         TextView note = new TextView(this);
-        note.setText("Cisco CDP / LLDP test. Manual capture may disconnect Android Ethernet for about 70 seconds.");
+        note.setText("Cisco CDP / LLDP receive test. V5 temporarily enables USB Ethernet RX and multicast.");
         note.setPadding(0,0,0,14);
         main.addView(note);
         Button refresh = new Button(this);
@@ -77,7 +77,7 @@ public class MainActivity extends Activity {
         main.addView(asixProbe);
 
         captureButton = new Button(this);
-        captureButton.setText("FIND MY SWITCH PORT — EXPERIMENTAL 70S");
+        captureButton.setText("FIND MY SWITCH PORT — V5 TEST");
         captureButton.setOnClickListener(v -> showCaptureWarning());
         main.addView(captureButton);
         stopCaptureButton = new Button(this);
@@ -197,10 +197,10 @@ public class MainActivity extends Activity {
         }
         new android.app.AlertDialog.Builder(this)
             .setTitle("USB Ethernet may disconnect")
-            .setMessage("This 70-second experiment will try to claim the ASIX AX88179A USB interface. "
+            .setMessage("This 70-second experiment will claim the ASIX AX88179A USB interface and temporarily change its receive and multicast settings. "
               + "Android's Ethernet connection may stop working temporarily, and you may need "
               + "to unplug and reconnect the Baseus hub afterward. "
-              + "It will only RECEIVE frames, not change any switch settings. "
+              + "It will only RECEIVE frames and will not change any switch settings. The app will attempt to restore the ASIX registers afterward. "
               + "Do not run this test over a network your work depends on.")
             .setNegativeButton("Cancel", (dlg,which) -> {})
             .setPositiveButton("START 70-SECOND TEST", (dlg,which) -> startCapture())

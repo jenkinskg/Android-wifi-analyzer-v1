@@ -57,12 +57,16 @@ public class MainActivity extends Activity {
         heading.setTextSize(21);
         main.addView(heading);
         TextView note = new TextView(this);
-        note.setText("Non-root hardware diagnostic; not yet a switch-port finder");
+        note.setText("V3: Press SCAN + TEST ASIX USB, then COPY REPORT. No root required.");
         note.setPadding(0,0,0,14);
         main.addView(note);
         Button refresh = new Button(this);
         refresh.setText("SCAN USB + ETHERNET");
-        refresh.setOnClickListener(v -> refresh());
+        refresh.setText("SCAN + TEST ASIX USB");
+        refresh.setOnClickListener(v -> {
+            refresh();
+            new Thread(this::probeAxReadOnly).start();
+        });
         main.addView(refresh);
         Button asixProbe = new Button(this);
         asixProbe.setText("TEST ASIX USB READ-ONLY");

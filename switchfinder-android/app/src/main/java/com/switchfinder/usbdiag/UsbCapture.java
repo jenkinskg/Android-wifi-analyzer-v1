@@ -17,8 +17,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * Only targets ASIX 0B95:1790, never sends packets or configures the switch.
  * Claims the USB interface for the duration of the capture, potentially
- * detaching Android's Ethernet driver.  The app uses no write control transfers,
- * so if the kernel unbind stops RX, this diagnostic will capture zero frames.
+ * detaching Android's Ethernet driver. After reading the ASIX controller
+ * registers, attempts to enable receive and multicast acceptance on the
+ * USB adapter only. May temporarily disrupt Ethernet; user confirms in UI.
+ * On completion, restores saved register values where possible.
  *
  * Frame extraction follows the ax88179_rx_fixup() USB framing used by Linux:
  * one or more frames, padded to eight bytes, per-frame 4-byte metadata,
@@ -37,16 +39,18 @@ public final class UsbCapture {
 
     public void capture(UsbManager manager, Listener listener) {
         StringBuilder report = new StringBuilder();
-        report.append("===== SWITCHFINDER V4 RAW USB CAPTURE =====\n");
+        report.append("===== SWITCHFINDER V5 RX RESTART TEST =====\n");
         report.append("Hardware: ASIX AX88179A (0B95:1790)\n");
         report.append("Duration: 70 seconds, unless stopped.\n");
-        report.append("CDP/LLDP receive only. No switch credentials.\n");
+        report.append("Receive only: enables ASIX RX + multicast. No switch credentials.\n");
         report.append("WARNING: claiming USB may disable Android eth0.\n\n");
 
         UsbDeviceConnection conn = null;
         UsbInterface intf = null;
         boolean claimed = false;
         boolean forced = false;
+        int savedRx = -1, savedMedium = -1, savedClock = -1, savedPower = -1;
+        boolean rxChanged=false, mediumChanged=false, clkChanged=false, powerChanged=false;
 
         try {
             UsbDevice target = null;
@@ -94,6 +98,15 @@ public final class UsbCapture {
                     "USB interface: %d, bulk-in endpoint: 0x%02X\n",
                     intf.getId(), bulkIn.getAddress()));
 
+            savedRx = readReg(conn, 0x0B, 2);
+            savedMedium = readReg(conn, 0x22, 2);
+            savedClock = readReg(conn, 0x33, 1);
+            savedPower = readReg(conn, 0x26, 2);
+            report.append("Before claim registers: RX_CTL=").append(regText(savedRx))
+                  .append(" MEDIUM=").append(regText(savedMedium))
+                  .append(" CLOCK=").append(regText(savedClock))
+                  .append(" PHY_POWER=").append(regText(savedPower)).append("\n");
+
             try {
                 claimed = conn.claimInterface(intf, false);
                 if (claimed) report.append("claimInterface(force=false): SUCCESS\n");
@@ -117,7 +130,66 @@ public final class UsbCapture {
                 report.append("Unplug/replug the hub to restore eth0 if needed.\n");
             }
 
-            // NO device configuration writes; this is strictly a receive test.
+            // Read controls again now that Android's kernel driver may be detached.
+            int rx = readReg(conn, 0x0B, 2);
+            int medium = readReg(conn, 0x22, 2);
+            int clock = readReg(conn, 0x33, 1);
+            int power = readReg(conn, 0x26, 2);
+            report.append("After claim registers: RX_CTL=").append(regText(rx))
+                  .append(" MEDIUM=").append(regText(medium))
+                  .append(" CLOCK=").append(regText(clock))
+                  .append(" PHY_POWER=").append(regText(power)).append("\n");
+
+            // Do not touch anything if we cannot read the controller state.
+            if (rx < 0 || medium < 0 || clock < 0 || power < 0) {
+                report.append("Read-after-claim failed: no registers written.\n");
+                return;
+            }
+            if (stopped.get()) {
+                report.append("Stopped before receive configuration.\n");
+                return;
+            }
+
+            // Only adjust ASIX controller operational registers, never EEPROM,
+            // PHY autonegotiation, MAC identity, or switch configuration.
+            // If forced detach disables clock, restore active clock bits.
+            int newClock = clock | 0x03; // AX_CLK_SELECT_ACS | AX_CLK_SELECT_BCS
+            if (newClock != clock) {
+                int n = writeReg(conn, 0x33, 1, newClock);
+                report.append("Enable ASIX clock: ").append(n).append(" ").append(regText(newClock)).append("\n");
+                if (n != 1) return;
+                clkChanged = true;
+            }
+            // Clear only the "bulk zero" request bit if the driver left it set.
+            int newPower = power & ~0x10; // AX_PHYPWR_RSTCTL_BZ
+            if (newPower != power) {
+                int n = writeReg(conn, 0x26, 2, newPower);
+                report.append("Clear bulk-zero condition: ").append(n).append(" ").append(regText(newPower)).append("\n");
+                if (n != 2) return;
+                powerChanged = true;
+            }
+            // Re-enable media receive without touching transmit or link settings.
+            int newMedium = medium | 0x0100; // AX_MEDIUM_RECEIVE_EN
+            if (newMedium != medium) {
+                int n = writeReg(conn, 0x22, 2, newMedium);
+                report.append("Enable media receive: ").append(n).append(" ").append(regText(newMedium)).append("\n");
+                if (n != 2) return;
+                mediumChanged = true;
+            }
+            // Accept multicast (CDP + LLDP), broadcast and normal frames.
+            // Leave promisc flag off; we're not trying to receive unrelated traffic.
+            int newRx = rx | 0x0080 | 0x0002 | 0x0008 | 0x0200;
+            if (newRx != rx) {
+                int n = writeReg(conn, 0x0B, 2, newRx);
+                report.append("Enable RX + all multicast: ").append(n).append(" ").append(regText(newRx)).append("\n");
+                if (n != 2) return;
+                rxChanged = true;
+            }
+            report.append("RX after enable=").append(regText(readReg(conn,0x0B,2)))
+                  .append(" MEDIUM after enable=").append(regText(readReg(conn,0x22,2)))
+                  .append("\n");
+            // All writes were scoped to ASIX runtime registers; no Ethernet packets
+            // are transmitted by this app. Reads will time out if no RX frames arrive.
             byte[] data = new byte[32768];
             long start = android.os.SystemClock.elapsedRealtime();
             long nextStatus = start;
@@ -157,6 +229,18 @@ public final class UsbCapture {
                   .append(": ").append(error.getMessage()).append("\n");
         } finally {
             if (conn != null) {
+                if (claimed) {
+                    // Best-effort return to settings from before the forced claim.
+                    // This does not guarantee Android will rebind its network driver.
+                    if (rxChanged && savedRx >= 0)
+                        report.append("Restore RX_CTL: ").append(writeReg(conn,0x0B,2,savedRx)).append("\n");
+                    if (mediumChanged && savedMedium >= 0)
+                        report.append("Restore MEDIUM: ").append(writeReg(conn,0x22,2,savedMedium)).append("\n");
+                    if (powerChanged && savedPower >= 0)
+                        report.append("Restore PHY_POWER: ").append(writeReg(conn,0x26,2,savedPower)).append("\n");
+                    if (clkChanged && savedClock >= 0)
+                        report.append("Restore CLOCK: ").append(writeReg(conn,0x33,1,savedClock)).append("\n");
+                }
                 if (claimed && intf != null) {
                     try {
                         report.append("releaseInterface: ")
@@ -185,6 +269,22 @@ public final class UsbCapture {
         }
     }
 
+    private static int readReg(UsbDeviceConnection c, int register, int size) {
+        byte[] b = new byte[size];
+        int n = c.controlTransfer(0xC0, 0x01, register, size, b, 0, size, 1000);
+        if (n != size) return -1;
+        return size == 1 ? (b[0]&0xff) : ((b[0]&0xff)|((b[1]&0xff)<<8));
+    }
+
+    private static int writeReg(UsbDeviceConnection c, int register, int size, int value) {
+        byte[] b = size==1 ? new byte[]{(byte)(value&255)}
+            : new byte[]{(byte)(value&255),(byte)((value>>8)&255)};
+        return c.controlTransfer(0x40, 0x01, register, size, b, 0, size, 1000);
+    }
+    private static String regText(int value) {
+        return value<0 ? "READ-FAILED" : String.format(Locale.US,"0x%04X",value);
+    }
+
     private void parseTransfer(byte[] data, int size) {
         if (size < 8) return;
         int trailer = little32(data, size-4);
@@ -207,7 +307,7 @@ public final class UsbCapture {
                 break;
             }
             // Ignore corrupted/drop packets. Bits from AX88179 metadata low word.
-            if ((meta & 0x60000000) != 0) {
+            if ((meta & 0xA0000000) != 0) {
                 stats.frameErrors++;
             } else {
                 parseEthernet(data, off+2, packetLength-2);

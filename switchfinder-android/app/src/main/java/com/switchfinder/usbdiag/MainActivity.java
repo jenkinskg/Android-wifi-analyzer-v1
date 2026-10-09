@@ -64,6 +64,11 @@ public class MainActivity extends Activity {
         refresh.setText("SCAN USB + ETHERNET");
         refresh.setOnClickListener(v -> refresh());
         main.addView(refresh);
+        Button asixProbe = new Button(this);
+        asixProbe.setText("TEST ASIX USB READ-ONLY");
+        asixProbe.setOnClickListener(v -> new Thread(this::probeAxReadOnly).start());
+        main.addView(asixProbe);
+
         Button permission = new Button(this);
         permission.setText("REQUEST USB ACCESS (OPTIONAL)");
         permission.setOnClickListener(v -> requestUsbAccess());
@@ -94,6 +99,75 @@ public class MainActivity extends Activity {
         main.addView(scroll, new LinearLayout.LayoutParams(-1,0,1));
         setContentView(main);
         refresh();
+    }
+
+    /**
+     * Read-only ASIX AX88179A vendor-control transfer probe.
+     * NO interface claim, USB reset, RX filter change, or data capture.
+     * These reads may fail while the Android kernel owns the Ethernet interface.
+     */
+    private void probeAxReadOnly() {
+        StringBuilder b = new StringBuilder();
+        b.append("\n===== AX88179A READ-ONLY PROBE =====\n");
+        UsbDevice ethernet = null;
+        try {
+            for (UsbDevice d: usbManager.getDeviceList().values()) {
+                if (d.getVendorId() == 0x0B95 && d.getProductId() == 0x1790) {
+                    ethernet = d;
+                    break;
+                }
+            }
+            if (ethernet == null) {
+                b.append("ASIX 0B95:1790 not found. Reconnect Baseus hub.\n");
+            } else if (!usbManager.hasPermission(ethernet)) {
+                b.append("USB permission not yet granted. Tap REQUEST USB ACCESS.\n");
+            } else {
+                android.hardware.usb.UsbDeviceConnection connection = usbManager.openDevice(ethernet);
+                if (connection == null) {
+                    b.append("openDevice FAILED; Android/kernel blocked device access.\n");
+                } else {
+                    try {
+                        b.append("openDevice: SUCCESS\n");
+                        b.append("No USB interface will be claimed or detached.\n");
+                        readAxRegister(connection, b, "MAC address", 0x10, 6);
+                        readAxRegister(connection, b, "RX control", 0x0B, 2);
+                        readAxRegister(connection, b, "Media status", 0x22, 2);
+                        readAxRegister(connection, b, "Bulk IN configuration", 0x2E, 5);
+                    } finally {
+                        connection.close();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            b.append("Probe error: ").append(e.getClass().getSimpleName()).append(": ")
+             .append(e.getMessage()).append("\n");
+        }
+        b.append("NO USB interface claimed, NO switch credentials used.\n");
+        b.append("Read success does NOT prove Ethernet packet capture is possible.\n");
+        final String results = b.toString();
+        runOnUiThread(() -> {
+            report += results;
+            output.setText(report);
+        });
+    }
+
+    private static void readAxRegister(
+            android.hardware.usb.UsbDeviceConnection connection,
+            StringBuilder result,
+            String label, int register, int length) {
+        byte[] buf = new byte[length];
+        // 0xC0: device-to-host, vendor-specific, device recipient.
+        // ASIX command 0x01: read MAC register at wValue=register, wIndex=length.
+        int n = connection.controlTransfer(0xC0, 0x01, register, length,
+                                            buf, 0, length, 1000);
+        result.append(label).append(": ");
+        if (n < 0) {
+            result.append("READ FAILED (").append(n).append(")\n");
+        } else {
+            result.append(n).append(" bytes ");
+            for (int i=0;i<n;i++) result.append(String.format(Locale.US,"%02X ",buf[i]&255));
+            result.append("\n");
+        }
     }
     private void requestUsbAccess() {
         if (usbManager == null || usbManager.getDeviceList().isEmpty()) {

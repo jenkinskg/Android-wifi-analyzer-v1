@@ -306,33 +306,34 @@ public final class UsbCapture {
     }
 
     private void parseTransfer(byte[] data, int size) {
-        if (size < 8) return;
-        int trailer = little32(data, size-4);
-        int count = trailer & 0xffff;
-        int headerOffset = (trailer >>> 16) & 0xffff;
-        if (count < 1 || count > 1024 || headerOffset < 16 ||
-            headerOffset > size-4 || (long)headerOffset + count*4L > size-4) {
-            stats.invalidTransfers++;
-            return;
+        // AX88179A (AX179A-family) uses 8-byte descriptors AND trailer.
+        // The previous V5 decoder used AX88179's 4-byte descriptors.
+        if(size < 24) { stats.invalidTransfers++; return; }
+        long trailer = (little32(data,size-8)&0xffffffffL) |
+                      ((little32(data,size-4)&0xffffffffL)<<32);
+        int count = (int)(trailer & 0x1fff);
+        int headerOffset = (int)((trailer >>> 13)&0x7ffff);
+        if(count<1 || count>256 || headerOffset<0 ||
+           (long)headerOffset + count*8L != size-8) {
+            stats.invalidTransfers++; return;
         }
         stats.framedTransfers++;
-        int off = 0;
-        for (int i=0; i<count; i++) {
-            int meta = little32(data, headerOffset + i*4);
-            int packetLength = (meta >>> 16) & 0x1fff;
-            if (packetLength == 0) continue; // AX88179 dummy header
-            int padded = (packetLength + 7) & ~7;
-            if (packetLength < 16 || off+padded > headerOffset) {
-                stats.frameErrors++;
-                break;
+        int off=0;
+        for(int i=0;i<count;i++){
+            int descOff=headerOffset+i*8;
+            long meta = (little32(data,descOff)&0xffffffffL) |
+                        ((little32(data,descOff+4)&0xffffffffL)<<32);
+            int packetLength=(int)((meta>>>16)&0x7fff);
+            int padded=(packetLength+7)&~7;
+            if(packetLength<14 || off+padded>headerOffset){
+                stats.frameErrors++;break;
             }
-            // Ignore corrupted/drop packets. Bits from AX88179 metadata low word.
-            if ((meta & 0xA0000000) != 0) {
+            // AX179A descriptor: BIT(11)=RX_OK; BIT(31)=DROP.
+            if((meta & (1L<<31))==0 && (meta & (1L<<11))!=0)
+                parseEthernet(data,off,packetLength);
+            else
                 stats.frameErrors++;
-            } else {
-                parseEthernet(data, off+2, packetLength-2);
-            }
-            off += padded;
+            off+=padded;
         }
     }
 

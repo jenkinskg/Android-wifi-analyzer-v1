@@ -6,8 +6,8 @@ android {
         applicationId 'com.switchfinder.usbdiag'
         minSdk 26
         targetSdk 35
-        versionCode 4
-        versionName '0.4-bulk-capture'
+        versionCode 5
+        versionName '0.5-rx-restart'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

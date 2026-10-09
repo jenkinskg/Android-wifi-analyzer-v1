@@ -32,6 +32,9 @@ public class MainActivity extends Activity {
     private static final String USB_PERMISSION_ACTION = "com.switchfinder.usbdiag.USB_PERMISSION";
     private TextView output;
     private UsbManager usbManager;
+    private volatile UsbCapture activeCapture;
+    private Button captureButton;
+    private Button stopCaptureButton;
     private String report = "";
     private final BroadcastReceiver permissionReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -53,11 +56,11 @@ public class MainActivity extends Activity {
         main.setOrientation(LinearLayout.VERTICAL);
         main.setPadding(18,20,18,12);
         TextView heading = new TextView(this);
-        heading.setText("SWITCHFINDER — USB TEST");
+        heading.setText("SWITCHFINDER V4 — EXPERIMENTAL");
         heading.setTextSize(21);
         main.addView(heading);
         TextView note = new TextView(this);
-        note.setText("V3: Press SCAN + TEST ASIX USB, then COPY REPORT. No root required.");
+        note.setText("Cisco CDP / LLDP test. Manual capture may disconnect Android Ethernet for about 70 seconds.");
         note.setPadding(0,0,0,14);
         main.addView(note);
         Button refresh = new Button(this);
@@ -72,6 +75,19 @@ public class MainActivity extends Activity {
         asixProbe.setText("TEST ASIX USB READ-ONLY");
         asixProbe.setOnClickListener(v -> new Thread(this::probeAxReadOnly).start());
         main.addView(asixProbe);
+
+        captureButton = new Button(this);
+        captureButton.setText("FIND MY SWITCH PORT — EXPERIMENTAL 70S");
+        captureButton.setOnClickListener(v -> showCaptureWarning());
+        main.addView(captureButton);
+        stopCaptureButton = new Button(this);
+        stopCaptureButton.setText("STOP CAPTURE / RELEASE USB");
+        stopCaptureButton.setEnabled(false);
+        stopCaptureButton.setOnClickListener(v -> {
+            UsbCapture c = activeCapture;
+            if (c != null) c.stop();
+        });
+        main.addView(stopCaptureButton);
 
         Button permission = new Button(this);
         permission.setText("REQUEST USB ACCESS (OPTIONAL)");
@@ -173,6 +189,43 @@ public class MainActivity extends Activity {
             result.append("\n");
         }
     }
+
+    private void showCaptureWarning() {
+        if (activeCapture != null) {
+            Toast.makeText(this,"Capture already running",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("USB Ethernet may disconnect")
+            .setMessage("This 70-second experiment will try to claim the ASIX AX88179A USB interface. "
+              + "Android's Ethernet connection may stop working temporarily, and you may need "
+              + "to unplug and reconnect the Baseus hub afterward. "
+              + "It will only RECEIVE frames, not change any switch settings. "
+              + "Do not run this test over a network your work depends on.")
+            .setNegativeButton("Cancel", (dlg,which) -> {})
+            .setPositiveButton("START 70-SECOND TEST", (dlg,which) -> startCapture())
+            .show();
+    }
+
+    private void startCapture() {
+        if (activeCapture != null) return;
+        UsbCapture c = new UsbCapture();
+        activeCapture = c;
+        captureButton.setEnabled(false);
+        stopCaptureButton.setEnabled(true);
+        report = "Preparing ASIX USB capture...";
+        output.setText(report);
+        new Thread(() -> c.capture(usbManager, (s,done) -> runOnUiThread(() -> {
+            report = s;
+            output.setText(report);
+            if(done) {
+                activeCapture = null;
+                captureButton.setEnabled(true);
+                stopCaptureButton.setEnabled(false);
+            }
+        })), "switchfinder-usb-capture").start();
+    }
+
     private void requestUsbAccess() {
         if (usbManager == null || usbManager.getDeviceList().isEmpty()) {
             Toast.makeText(this, "No USB devices exposed to this app", Toast.LENGTH_LONG).show();
@@ -241,6 +294,8 @@ public class MainActivity extends Activity {
         output.setText(report);
     }
     @Override public void onDestroy(){
+        UsbCapture c = activeCapture;
+        if (c != null) c.stop();
         try { unregisterReceiver(permissionReceiver); }catch(Exception ignored){}
         super.onDestroy();
     }

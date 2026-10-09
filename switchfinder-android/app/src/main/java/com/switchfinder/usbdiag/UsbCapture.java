@@ -39,10 +39,10 @@ public final class UsbCapture {
 
     public void capture(UsbManager manager, Listener listener) {
         StringBuilder report = new StringBuilder();
-        report.append("===== SWITCHFINDER V5 RX RESTART TEST =====\n");
+        report.append("===== SWITCHFINDER V6 AX88179A RECEIVE TEST =====\n");
         report.append("Hardware: ASIX AX88179A (0B95:1790)\n");
         report.append("Duration: 70 seconds, unless stopped.\n");
-        report.append("Receive only: enables ASIX RX + multicast. No switch credentials.\n");
+        report.append("Receive-only AX88179A PHY+MAC-path test; no switch credentials.\n");
         report.append("WARNING: claiming USB may disable Android eth0.\n\n");
 
         UsbDeviceConnection conn = null;
@@ -50,6 +50,7 @@ public final class UsbCapture {
         boolean claimed = false;
         boolean forced = false;
         int savedRx = -1, savedMedium = -1, savedClock = -1, savedPower = -1;
+        boolean phyPowerStarted = false;
         boolean rxChanged=false, mediumChanged=false, clkChanged=false, powerChanged=false;
 
         try {
@@ -65,6 +66,11 @@ public final class UsbCapture {
                 report.append("ASIX adapter NOT PRESENT.\n");
                 return;
             }
+            if (!"AX88179A".equalsIgnoreCase(target.getProductName())) {
+                report.append("Unsupported ASIX model: ").append(target.getProductName()).append("\n");
+                return;
+            }
+            report.append("Chip type AX88179A: confirmed\n");
             if (!manager.hasPermission(target)) {
                 report.append("USB permission not granted. Request USB access first.\n");
                 return;
@@ -140,55 +146,53 @@ public final class UsbCapture {
                   .append(" CLOCK=").append(regText(clock))
                   .append(" PHY_POWER=").append(regText(power)).append("\n");
 
-            // Do not touch anything if we cannot read the controller state.
-            if (rx < 0 || medium < 0 || clock < 0 || power < 0) {
-                report.append("Read-after-claim failed: no registers written.\n");
+            // AX88179A (2026 chip) differs from the older AX88179.
+            // Its driver powers the PHY using USB vendor request 0x31,
+            // not legacy MAC register 0x26. It also gates the RX MAC path.
+            if (rx < 0 || medium < 0 || stopped.get()) {
+                report.append("Missing controller state, or stopped; aborting.\n");
                 return;
             }
-            if (stopped.get()) {
-                report.append("Stopped before receive configuration.\n");
-                return;
-            }
+            int phyOn = conn.controlTransfer(0x40, 0x31, 0, 0,
+                      new byte[]{0x02}, 0, 1, 1000);
+            report.append("AX88179A PHY power-up: ").append(phyOn).append("\n");
+            if (phyOn != 1) return;
+            phyPowerStarted = true;
+            Thread.sleep(500);
+            int phyStatus = readPhyBmsr(conn);
+            int usbStatus = readReg(conn,0x02,1);
+            report.append("PHY MII_BMSR: ").append(regText(phyStatus))
+                  .append(" Link: ").append(phyStatus>=0 && (phyStatus&4)!=0)
+                  .append(" USB PHY speed: ").append(regText(usbStatus)).append("\n");
 
-            // Only adjust ASIX controller operational registers, never EEPROM,
-            // PHY autonegotiation, MAC identity, or switch configuration.
-            // If forced detach disables clock, restore active clock bits.
-            int newClock = clock | 0x03; // AX_CLK_SELECT_ACS | AX_CLK_SELECT_BCS
-            if (newClock != clock) {
-                int n = writeReg(conn, 0x33, 1, newClock);
-                report.append("Enable ASIX clock: ").append(n).append(" ").append(regText(newClock)).append("\n");
-                if (n != 1) return;
-                clkChanged = true;
-            }
-            // Clear only the "bulk zero" request bit if the driver left it set.
-            int newPower = power & ~0x10; // AX_PHYPWR_RSTCTL_BZ
-            if (newPower != power) {
-                int n = writeReg(conn, 0x26, 2, newPower);
-                report.append("Clear bulk-zero condition: ").append(n).append(" ").append(regText(newPower)).append("\n");
-                if (n != 2) return;
-                powerChanged = true;
-            }
-            // Re-enable media receive without touching transmit or link settings.
-            int newMedium = medium | 0x0100; // AX_MEDIUM_RECEIVE_EN
-            if (newMedium != medium) {
-                int n = writeReg(conn, 0x22, 2, newMedium);
-                report.append("Enable media receive: ").append(n).append(" ").append(regText(newMedium)).append("\n");
-                if (n != 2) return;
-                mediumChanged = true;
-            }
-            // Accept multicast (CDP + LLDP), broadcast and normal frames.
-            // Leave promisc flag off; we're not trying to receive unrelated traffic.
-            int newRx = rx | 0x0080 | 0x0002 | 0x0008 | 0x0200;
-            if (newRx != rx) {
-                int n = writeReg(conn, 0x0B, 2, newRx);
-                report.append("Enable RX + all multicast: ").append(n).append(" ").append(regText(newRx)).append("\n");
-                if (n != 2) return;
-                rxChanged = true;
-            }
-            report.append("RX after enable=").append(regText(readReg(conn,0x0B,2)))
-                  .append(" MEDIUM after enable=").append(regText(readReg(conn,0x22,2)))
+            // AX88179A link-up setup uses RX_STATUS_CDC, RX_DATA_CDC_CNT
+            // and MAC_PATH in addition to the legacy receive controls.
+            if (!writeRequired(conn,report,"Stop MAC_PATH",0xB7,new byte[]{0})) return;
+            if (!writeRequired(conn,report,"Stop RX_CTL",0x0B,new byte[]{0,0})) return;
+            if (!writeRequired(conn,report,"MAC_RX_STATUS_CDC",0x6D,
+                    new byte[]{(byte)0x78,0x70,0})) return;
+            if (!writeRequired(conn,report,"MAC_RX_DATA_CDC_CNT",0xC0,
+                    new byte[]{0x40})) return;
+            byte[] bulk=(usbStatus>=0 && (usbStatus&4)!=0)
+                ? new byte[]{0x05,0x7B,0,0x17,0x0F}
+                : new byte[]{0x05,(byte)0xC0,0x02,0x06,0x0F};
+            if (!writeRequired(conn,report,"AX88179A bulk-in",0x2E,bulk)) return;
+            if (!writeRequired(conn,report,"BFM_DATA",0x0E,new byte[]{0})) return;
+            // No IP alignment on AX88179A. Accept all multicast (CDP/LLDP).
+            int newRx = 0x0100 | 0x0080 | 0x0020 | 0x0002 | 0x0008;
+            if (!writeRequired(conn,report,"RX_CTL start",0x0B,
+                    new byte[]{(byte)newRx,(byte)(newRx>>8)})) return;
+            if (!writeRequired(conn,report,"MEDIUM receive",0x22,
+                    new byte[]{0x33,0x01})) return;
+            if (!writeRequired(conn,report,"MAC_PATH RX+TX-ready",0xB7,
+                    new byte[]{0x03})) return;
+            Thread.sleep(350);
+            report.append("After AX88179A initialization: RX_CTL=")
+                  .append(regText(readReg(conn,0x0B,2)))
+                  .append(" MEDIUM=").append(regText(readReg(conn,0x22,2)))
+                  .append(" MAC_PATH=").append(regText(readReg(conn,0xB7,1)))
                   .append("\n");
-            // All writes were scoped to ASIX runtime registers; no Ethernet packets
+            // Changes are to ASIX runtime registers only; no Ethernet packets
             // are transmitted by this app. Reads will time out if no RX frames arrive.
             byte[] data = new byte[32768];
             long start = android.os.SystemClock.elapsedRealtime();
@@ -229,6 +233,11 @@ public final class UsbCapture {
                   .append(": ").append(error.getMessage()).append("\n");
         } finally {
             if (conn != null) {
+                if (phyPowerStarted) {
+                    int down=conn.controlTransfer(0x40,0x31,0,0,
+                                   new byte[]{0},0,1,900);
+                    report.append("AX88179A PHY power-down: ").append(down).append("\n");
+                }
                 if (claimed) {
                     // Best-effort return to settings from before the forced claim.
                     // This does not guarantee Android will rebind its network driver.
@@ -269,6 +278,17 @@ public final class UsbCapture {
         }
     }
 
+    private static int readPhyBmsr(UsbDeviceConnection c) {
+        byte[] bytes=new byte[2];
+        int n=c.controlTransfer(0xC0,0x02,0x03,0x01,bytes,0,2,1000);
+        return n==2 ? ((bytes[0]&255)|((bytes[1]&255)<<8)) : -1;
+    }
+    private static boolean writeRequired(UsbDeviceConnection c,StringBuilder report,
+                       String label,int register,byte[] bytes) {
+        int n=c.controlTransfer(0x40,0x01,register,bytes.length,bytes,0,bytes.length,1000);
+        report.append(label).append(": ").append(n==bytes.length?"OK":"FAILED "+n).append("\n");
+        return n==bytes.length;
+    }
     private static int readReg(UsbDeviceConnection c, int register, int size) {
         byte[] b = new byte[size];
         int n = c.controlTransfer(0xC0, 0x01, register, size, b, 0, size, 1000);

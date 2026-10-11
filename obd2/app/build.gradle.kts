@@ -9,8 +9,8 @@ android {
         applicationId = "com.keith.obd2scanner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.5-IMA"
+        versionCode = 6
+        versionName = "0.6-Sniffer"
     }
 }
 dependencies {

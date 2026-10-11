@@ -413,7 +413,7 @@ class MainActivity : Activity() {
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         val r = Ui.page(this)
-        r.addView(Ui.title(this, "OBD2 MULTI-VEHICLE SCANNER v0.4-test"), Ui.lp())
+        r.addView(Ui.title(this, "OBD2 MULTI-VEHICLE SCANNER v0.5-IMA"), Ui.lp())
         r.addView(Ui.text(this, "Bluetooth + USB OBD/VCI connection. Tune Manager added with flash safety preflight."), Ui.lp())
         r.addView(Ui.button(this, "2014 HONDA CR-Z\nHonda / IMA") { open(VehicleProfile.HONDA, false) }, Ui.lp())
         r.addView(Ui.button(this, "2011 VOLVO XC60\nVolvo Diagnostics") { open(VehicleProfile.VOLVO, false) }, Ui.lp())
@@ -540,7 +540,11 @@ class DashboardActivity : Activity() {
             startActivity(Intent(this, TuneActivity::class.java).putExtra("profile", profile.key))
         }, Ui.lp())
         r.addView(Ui.button(this, if (profile == VehicleProfile.HONDA) "HONDA IMA / HYBRID BATTERY" else "VOLVO ELECTRICAL / MODULES") {
-            startActivity(Intent(this, EnhancedActivity::class.java).putExtra("profile", profile.key))
+            if (profile == VehicleProfile.HONDA) {
+                startActivity(Intent(this, ImaHealthActivity::class.java))
+            } else {
+                startActivity(Intent(this, EnhancedActivity::class.java).putExtra("profile", profile.key))
+            }
         }, Ui.lp())
         r.addView(Ui.button(this, "BUTTON / SWITCH STATUS") {
             startActivity(Intent(this, EnhancedActivity::class.java).putExtra("profile", profile.key).putExtra("section", "inputs"))

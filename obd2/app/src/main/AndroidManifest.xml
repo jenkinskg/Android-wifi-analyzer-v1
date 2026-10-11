@@ -11,6 +11,7 @@
         android:label="OBD2 Multi-Vehicle"
         android:theme="@style/AppTheme">
         <activity android:name=".ElmTestActivity" android:exported="false" />
+        <activity android:name=".ImaHealthActivity" android:exported="false" />
         <activity android:name=".TuneActivity" android:exported="false" />
         <activity android:name=".UsbDevicePickerActivity" android:exported="false" />
         <activity android:name=".EnhancedActivity" android:exported="false" />

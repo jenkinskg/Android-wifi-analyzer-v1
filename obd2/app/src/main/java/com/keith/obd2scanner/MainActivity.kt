@@ -413,7 +413,7 @@ class MainActivity : Activity() {
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         val r = Ui.page(this)
-        r.addView(Ui.title(this, "OBD2 MULTI-VEHICLE SCANNER v0.6-Sniffer"), Ui.lp())
+        r.addView(Ui.title(this, "OBD2 MULTI-VEHICLE SCANNER v0.7-V114"), Ui.lp())
         r.addView(Ui.text(this, "Bluetooth + USB OBD/VCI connection. Tune Manager added with flash safety preflight."), Ui.lp())
         r.addView(Ui.button(this, "2014 HONDA CR-Z\nHonda / IMA") { open(VehicleProfile.HONDA, false) }, Ui.lp())
         r.addView(Ui.button(this, "2011 VOLVO XC60\nVolvo Diagnostics") { open(VehicleProfile.VOLVO, false) }, Ui.lp())
@@ -423,6 +423,9 @@ class MainActivity : Activity() {
         }, Ui.lp())
         r.addView(Ui.button(this, "CR-Z IMA CAN SNIFFER") {
             startActivity(Intent(this, CanSnifferActivity::class.java))
+        }, Ui.lp())
+        r.addView(Ui.button(this, "XTOOL V114 INTERFACE TEST") {
+            startActivity(Intent(this, V114TestActivity::class.java))
         }, Ui.lp())
         setContentView(ScrollView(this).apply { addView(r) })
     }

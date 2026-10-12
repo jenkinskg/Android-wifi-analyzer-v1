@@ -37,3 +37,12 @@ Uses the Android **gyroscope** to measure RPM without looking through the camera
 A physical gyroscope is required, and its maximum angular rate may limit 45/78 RPM
 on some devices. Three decimal places are only display formatting, NOT an accuracy claim.
 Keep the phone secured; phone mass may affect turntable speed.
+
+## v3: ALWAYS-UPRIGHT RPM GAUGE
+- The **UPRIGHT GAUGE: ON** option is enabled by default.
+- The entire illuminated circular dial, digits, and direction indicator counter-rotate as the phone spins, keeping the speed oriented toward a stationary viewer.
+- Fast gyro samples update the dial orientation even between RPM number changes.
+- Tap **UPRIGHT GAUGE** to toggle it. First ZERO with the platter stopped, while the screen faces the direction you want the RPM to face.
+- Intended for phones placed face-up on a turntable, spinning around their screen-normal axis.
+- Gyroscope integration can drift; the upright display is approximate and is not camera-based stabilization.
+- Keep the phone secured and avoid contact with records or the tonearm.

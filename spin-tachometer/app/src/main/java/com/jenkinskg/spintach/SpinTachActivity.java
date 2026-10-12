@@ -3,6 +3,7 @@ package com.jenkinskg.spintach;
 import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -117,6 +118,17 @@ public class SpinTachActivity extends Activity implements TextureView.SurfaceTex
         TextView subtitle = text("CAMERA OPTICAL RPM METER", 12, Color.rgb(117, 202, 250), true);
         subtitle.setLetterSpacing(0.13f);
         root.addView(subtitle);
+        gap(root, 14);
+
+        Button turntableMode = button("TURNTABLE MODE  •  PHONE ON PLATTER",
+                Color.rgb(16, 146, 115));
+        turntableMode.setTextSize(13);
+        root.addView(turntableMode, new LinearLayout.LayoutParams(-1, dp(50)));
+        turntableMode.setOnClickListener(v -> {
+            Intent intent = new Intent(this, TurntableActivity.class);
+            intent.putExtra("ledColor", ledColor);
+            startActivity(intent);
+        });
         gap(root, 14);
 
         LinearLayout displayCard = new LinearLayout(this);

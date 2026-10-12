@@ -345,12 +345,13 @@ public class SpinTachActivity extends Activity implements TextureView.SurfaceTex
                     ImageFormat.YUV_420_888, 3);
             imageReader.setOnImageAvailableListener(reader -> analyzeFrame(reader), cameraHandler);
             opening = true;
+            final CameraCharacteristics activeCharacteristics = cc;
             manager.openCamera(id, new CameraDevice.StateCallback() {
                 @Override public void onOpened(CameraDevice opened) {
                     opening = false;
                     if (!wantsCamera || cameraHandler == null) { opened.close(); return; }
                     camera = opened;
-                    configureSession(cc);
+                    configureSession(activeCharacteristics);
                 }
                 @Override public void onDisconnected(CameraDevice opened) {
                     opening = false; opened.close(); camera = null;

@@ -21,3 +21,19 @@ Do not position the phone or your hands near moving equipment.
 GitHub Actions: run the "Build Spin Tachometer APK" workflow or push under
 `spin-tachometer/`. Download the `SpinTachometer-APK` artifact and unzip to get
 `app-debug.apk`. No Termux or runtime scripting required. Android 8.0+.
+
+## v2: TURNTABLE / PHONE ON PLATTER
+Tap **TURNTABLE MODE • PHONE ON PLATTER** on the main screen.
+Uses the Android **gyroscope** to measure RPM without looking through the camera.
+- Place phone *screen up* close to the spindle with the platter **stopped** on a secure,
+  non-slip pad (not on a vinyl record; keep clear of the tonearm).
+- Tap **ZERO • STILL**; keep stationary for two seconds to subtract gyro bias.
+- Start the turntable. The big LED display shows estimated **RPM** to three decimals
+  (for example **33.333**, **45.000**, or **78.000**).
+- **STABLE DIGITS** counter-rotates the numbers while the phone spins, for readability.
+- Select display colors from six presets or a custom color slider.
+- Press **CAMERA MODE** to return to the original optical tachometer.
+
+A physical gyroscope is required, and its maximum angular rate may limit 45/78 RPM
+on some devices. Three decimal places are only display formatting, NOT an accuracy claim.
+Keep the phone secured; phone mass may affect turntable speed.

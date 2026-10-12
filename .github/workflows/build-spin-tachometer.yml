@@ -1,0 +1,36 @@
+name: Build Spin Tachometer APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'spin-tachometer/**'
+      - '.github/workflows/build-spin-tachometer.yml'
+
+jobs:
+  android:
+    name: Compile Android APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android platform
+        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Build standalone debug APK
+        working-directory: spin-tachometer
+        run: gradle --no-daemon --stacktrace assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SpinTachometer-APK
+          path: spin-tachometer/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30

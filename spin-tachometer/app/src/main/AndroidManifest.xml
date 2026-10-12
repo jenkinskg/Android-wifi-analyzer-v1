@@ -7,6 +7,9 @@
         android:label="Spin Tachometer"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:usesCleartextTraffic="false">
+        <activity android:name=".TurntableActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
         <activity android:name=".SpinTachActivity"
             android:exported="true"
             android:screenOrientation="portrait">

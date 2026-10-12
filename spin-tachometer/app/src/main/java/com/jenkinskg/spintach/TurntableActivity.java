@@ -35,6 +35,7 @@ public final class TurntableActivity extends Activity implements SensorEventList
     private TextView rpmText, directionText, statusText, diagnosticText, colorName;
     private Button stabilizeButton, zeroButton;
     private Dial dial;
+    private FrameLayout stableGauge;
     private boolean stabilizeDigits = true;
     private int ledColor;
 
@@ -132,8 +133,15 @@ public final class TurntableActivity extends Activity implements SensorEventList
         readout.setBackground(readoutBg);
         main.addView(readout, new LinearLayout.LayoutParams(-1, dp(335)));
 
+        // The circular gauge, digits and direction label rotate together in the
+        // opposite direction to the physical platter. The stationary rounded
+        // outer panel is symmetric; the information stays upright in the room.
+        stableGauge = new FrameLayout(this);
+        stableGauge.setClipChildren(false);
+        stableGauge.setClipToPadding(false);
+        readout.addView(stableGauge, new FrameLayout.LayoutParams(-1,-1));
         dial = new Dial(this);
-        readout.addView(dial, new FrameLayout.LayoutParams(-1,-1));
+        stableGauge.addView(dial, new FrameLayout.LayoutParams(-1,-1));
         rpmText = label("0.000", 46, ledColor, true);
         rpmText.setTypeface(Typeface.create("monospace", Typeface.BOLD));
         rpmText.setIncludeFontPadding(false);
@@ -144,12 +152,15 @@ public final class TurntableActivity extends Activity implements SensorEventList
         rpmText.setShadowLayer(dp(15), 0, 0, ledColor);
         FrameLayout.LayoutParams digitsLp = new FrameLayout.LayoutParams(
                 -1, dp(320), Gravity.CENTER);
-        readout.addView(rpmText, digitsLp);
+        stableGauge.addView(rpmText, digitsLp);
+
+        directionText = label("PLATTER STOPPED", 15, Color.rgb(255,199,113), true);
+        directionText.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams directionLp = new FrameLayout.LayoutParams(-1,dp(34),Gravity.TOP);
+        directionLp.topMargin = dp(236);
+        stableGauge.addView(directionText,directionLp);
 
         space(main, 10);
-        directionText = label("0 RPM   •   PLATTER STOPPED", 15, Color.rgb(255,199,113), true);
-        directionText.setGravity(Gravity.CENTER);
-        main.addView(directionText);
         space(main, 10);
         statusText = label(feedback, 14, Color.rgb(137,222,225), true);
         main.addView(statusText);
@@ -165,7 +176,7 @@ public final class TurntableActivity extends Activity implements SensorEventList
         controls.addView(zeroButton,new LinearLayout.LayoutParams(0,-1,1));
         View separator = new View(this);
         controls.addView(separator, new LinearLayout.LayoutParams(dp(10),1));
-        stabilizeButton = button("STABLE DIGITS: ON", Color.rgb(112,67,183));
+        stabilizeButton = button("UPRIGHT GAUGE: ON", Color.rgb(112,67,183));
         controls.addView(stabilizeButton,new LinearLayout.LayoutParams(0,-1,1.4f));
 
         zeroButton.setOnClickListener(v -> {
@@ -180,9 +191,10 @@ public final class TurntableActivity extends Activity implements SensorEventList
         });
         stabilizeButton.setOnClickListener(v -> {
             stabilizeDigits = !stabilizeDigits;
-            stabilizeButton.setText(stabilizeDigits ? "STABLE DIGITS: ON" : "STABLE DIGITS: OFF");
-            if (!stabilizeDigits) rpmText.setRotation(0f);
-            else { accumulatedAngle = 0; rpmText.setRotation(0f); }
+            stabilizeButton.setText(stabilizeDigits ? "UPRIGHT GAUGE: ON" : "UPRIGHT GAUGE: OFF");
+            // Re-align to the current phone position if the feature is enabled.
+            accumulatedAngle = 0;
+            stableGauge.setRotation(0f);
         });
 
         space(main, 19);
@@ -226,7 +238,8 @@ public final class TurntableActivity extends Activity implements SensorEventList
         TextView instruction = label(
                 "HOW TO USE  •  With the platter STOPPED, put the phone screen-up near the center on a secure non-slip surface. " +
                 "Tap ZERO and leave it still for 2 seconds. Then start the turntable. " +
-                "STABLE DIGITS counter-rotates the readout so you can read it while the phone spins.", 13,
+                "UPRIGHT GAUGE makes the entire illuminated dial stay facing the viewer as the phone spins. " +
+                "Use the switch to turn stabilization on or off.", 13,
                 SECONDARY, false);
         instruction.setLineSpacing(dp(3),1f);
         main.addView(instruction);
@@ -255,7 +268,7 @@ public final class TurntableActivity extends Activity implements SensorEventList
         super.onResume();
         if(gyroscope != null) {
             priorEventTime=0;
-            sensorManager.registerListener(this,gyroscope,SensorManager.SENSOR_DELAY_GAME);
+            sensorManager.registerListener(this,gyroscope,SensorManager.SENSOR_DELAY_FASTEST);
         }
     }
     @Override protected void onPause() {
@@ -283,7 +296,7 @@ public final class TurntableActivity extends Activity implements SensorEventList
                     hasMeasurement=false;
                     priorEventTime=0;
                     accumulatedAngle=0;
-                    rpmText.setRotation(0f);
+                    stableGauge.setRotation(0f);
                     feedback="CALIBRATED • start the turntable to measure RPM";
                 }
                 statusText.setText(feedback);
@@ -295,7 +308,13 @@ public final class TurntableActivity extends Activity implements SensorEventList
         double dt = priorEventTime>0 ? (time-priorEventTime)/1_000_000_000.0 : 0;
         priorEventTime=time;
         if(dt>0 && dt<.25) {
-            accumulatedAngle += corrected*dt;
+            accumulatedAngle = Math.IEEEremainder(accumulatedAngle + corrected*dt, Math.PI*2.0);
+            // Android view rotation is clockwise-positive. Gyro Z reports
+            // counterclockwise-positive with screen facing up, so rotating
+            // the gauge by +integrated Z cancels phone rotation in the room.
+            if(stabilizeDigits) {
+                stableGauge.setRotation((float)Math.toDegrees(accumulatedAngle));
+            }
             double actual = corrected*RAD_TO_RPM;
             if(!hasMeasurement) { smoothedRpm=actual; hasMeasurement=true; }
             else {
@@ -308,12 +327,7 @@ public final class TurntableActivity extends Activity implements SensorEventList
         double current=Math.abs(smoothedRpm);
         if(current<.008) current=0;
         rpmText.setText(String.format(Locale.US,"%,.3f",current));
-        if(stabilizeDigits) {
-            float angle=(float)(Math.toDegrees(accumulatedAngle)%360);
-            rpmText.setRotation(angle);
-        }
-
-        if(Math.abs(smoothedRpm)<.08) directionText.setText("PLATTER STOPPED  •  0 RPM");
+        if(Math.abs(smoothedRpm)<.08) directionText.setText("PLATTER STOPPED");
         else directionText.setText(smoothedRpm<0 ? "CLOCKWISE  ↻" : "COUNTERCLOCKWISE  ↺");
 
         double limit = gyroscope.getMaximumRange()*RAD_TO_RPM;
@@ -360,7 +374,6 @@ public final class TurntableActivity extends Activity implements SensorEventList
             paint.setTextSize(dp(13));
             paint.setTextAlign(Paint.Align.CENTER);
             canvas.drawText("LIVE  RPM",cx,cy-radius*.50f,paint);
-            canvas.drawText("GYROSCOPE",cx,cy+radius*.55f,paint);
         }
     }
 }

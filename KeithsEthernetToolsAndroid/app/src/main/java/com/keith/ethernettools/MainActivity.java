@@ -42,7 +42,7 @@ public class MainActivity extends Activity {
     private void addButton(String caption,Runnable runnable){content.addView(btn(caption,runnable));}
     private void showScreen(){
         LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(BG);
-        TextView head=text("⚡ KEITH'S ETHERNET TOOLS  •  ANDROID 3.5.1 BETA",19,GREEN);head.setTypeface(Typeface.DEFAULT,Typeface.BOLD);root.addView(head);
+        TextView head=text("⚡ KEITH'S ETHERNET TOOLS  •  ANDROID 3.5.2 BETA",19,GREEN);head.setTypeface(Typeface.DEFAULT,Typeface.BOLD);root.addView(head);
         HorizontalScrollView nav=new HorizontalScrollView(this);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);
         for(String name:new String[]{"Wi-Fi","Ping Bounce","Traceroute","Port & VLAN","Switch Test","Nortel Telnet","Reports"}){
             Button b=btn(name,()->{tab=name;showScreen();});if(tab.equals(name))b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff248858));row.addView(b);
@@ -108,7 +108,7 @@ public class MainActivity extends Activity {
 
     private void portVlanTab(){
         addLabel("CISCO SWITCH PORT / VLAN IDENTIFIER");
-        content.addView(text("Access port, voice VLAN, trunk VLANs, link state, MAC table, PoE, and full interface configuration over SSH. Cisco IOS / IOS-XE.",14,0xffccefff));
+        content.addView(text("NEW: Easy-to-read VLAN chart showing DATA / ACCESS VLAN, VOICE VLAN, TRUNK NATIVE and ALLOWED VLANs, plus link status. Requires Cisco SSH login; port details depend on switch support.",14,0xffccefff));
         ciscoHostEdit=entry(ciscoHost,"Cisco switch IP or hostname");
         ciscoUserEdit=entry(ciscoUsername,"SSH username");
         ciscoPassEdit=entry(ciscoPassword,"SSH password");
@@ -140,8 +140,8 @@ public class MainActivity extends Activity {
                 else{ciscoMacEdit.setText(found);append("Detected local Ethernet MAC candidate: "+found+". Confirm it is the MAC learned by the switch.");}
             }catch(Exception e){append("Android did not expose Ethernet MAC: "+e.getMessage());}
         });
-        addButton("SHOW ALL PORTS / STATUS / VLANs",()->portVlanAction("all"));
-        addButton("SHOW SELECTED PORT (CONFIG + PoE + VLAN)",()->portVlanAction("port"));
+        addButton("SHOW ALL PORTS + VLAN CHART",()->portVlanAction("all"));
+        addButton("SHOW PORT: ACCESS + VOICE + TRUNK VLAN",()->portVlanAction("port"));
         addButton("FIND DEVICE PORT BY IP / MAC",()->portVlanAction("find"));
         addButton("Copy Complete Report",()->{
             ((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Switch Port VLAN report",getReport()));
@@ -172,10 +172,16 @@ public class MainActivity extends Activity {
             try(CiscoSsh ssh=new CiscoSsh(this,msg->append(msg))){
                 ssh.connect(host,user,pass,enable);
                 if(action.equals("all")){
-                    reportSwitchCommands(ssh,Arrays.asList(
-                       "show interfaces status","show vlan brief","show power inline","show etherchannel summary"
+                    Map<String,String> vlanResults=ssh.commands(Arrays.asList(
+                        "show interfaces status",
+                        "show interfaces switchport",
+                        "show vlan brief",
+                        "show interfaces trunk",
+                        "show power inline",
+                        "show etherchannel summary"
                     ));
-                    append("TIP: The VLAN column in 'show interfaces status' is the access VLAN or 'trunk'. See running config and switchport output for voice/native/allowed VLAN details.");
+                    append(CiscoVlanReport.summarizeAll(vlanResults));
+                    appendRawSwitchCommands(vlanResults);
                 }else if(action.equals("port")){
                     queryCiscoPort(ssh,port);
                 }else{
@@ -220,7 +226,10 @@ public class MainActivity extends Activity {
         });
     }
     private void reportSwitchCommands(CiscoSsh ssh,List<String> commands)throws Exception{
-        Map<String,String> results=ssh.commands(commands);
+        appendRawSwitchCommands(ssh.commands(commands));
+    }
+    private void appendRawSwitchCommands(Map<String,String> results){
+        append("========== ORIGINAL CISCO CLI OUTPUT (select/copy) ==========");
         for(Map.Entry<String,String> result:results.entrySet()){
             append("---- "+result.getKey()+" ----\n"+result.getValue());
         }
@@ -228,7 +237,7 @@ public class MainActivity extends Activity {
     private void queryCiscoPort(CiscoSsh ssh,String port)throws Exception{
         if(!CiscoPortParser.validInterface(port)){append("Invalid interface name returned: "+port);return;}
         append("PORT DETAILS: "+port);
-        reportSwitchCommands(ssh,Arrays.asList(
+        Map<String,String> results=ssh.commands(Arrays.asList(
             "show interfaces status",
             "show interfaces "+port+" switchport",
             "show running-config interface "+port,
@@ -238,7 +247,9 @@ public class MainActivity extends Activity {
             "show cdp neighbors "+port+" detail",
             "show lldp neighbors "+port+" detail"
         ));
-        append("INTERPRETATION: running-config shows access VLAN / voice VLAN / trunk allowed VLANs. 'show interfaces status' shows operational state and VLAN. PoE data depends on switch/model. Check the results for unsupported commands.");
+        append(CiscoVlanReport.summarizePort(port,results));
+        appendRawSwitchCommands(results);
+        append("The formatted summary above is based on the switch output. Fields marked (not reported) were not returned by this switch or command.");
     }
 
     private void reportsTab(){addLabel("COMPLETE SESSION REPORT");addButton("Copy All",()->{((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Keith's Ethernet Tools",getReport()));Toast.makeText(this,"Report copied",Toast.LENGTH_SHORT).show();});

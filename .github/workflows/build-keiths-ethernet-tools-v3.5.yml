@@ -1,4 +1,4 @@
-name: Build Keith's Ethernet Tools Android v3.5
+name: Build Keith's Ethernet Tools Android v3.5.1
 on:
   push:
     branches:
@@ -27,10 +27,13 @@ jobs:
       - name: Build installable debug APK
         working-directory: KeithsEthernetToolsAndroid
         run: gradle --no-daemon assembleDebug
+      - name: Test port and VLAN parser
+        working-directory: KeithsEthernetToolsAndroid
+        run: gradle --no-daemon testDebugUnitTest
       - name: Check generated APK
         run: test -s KeithsEthernetToolsAndroid/app/build/outputs/apk/debug/app-debug.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: Keiths-Ethernet-Tools-Android-v3.5-APK
+          name: Keiths-Ethernet-Tools-Android-v3.5.1-APK
           path: KeithsEthernetToolsAndroid/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error

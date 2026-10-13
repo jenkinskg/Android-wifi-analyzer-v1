@@ -46,3 +46,6 @@ Keep the phone secured; phone mass may affect turntable speed.
 - Intended for phones placed face-up on a turntable, spinning around their screen-normal axis.
 - Gyroscope integration can drift; the upright display is approximate and is not camera-based stabilization.
 - Keep the phone secured and avoid contact with records or the tonearm.
+
+## v4: startup camera crash fix
+The app now **starts directly in Turntable Mode**, which only reads the gyroscope and **does not request camera permission**. A camera-permission request occurs **only when the user taps CAMERA MODE (OPTIONAL)**. If the device has no gyroscope, the screen explains that limitation rather than attempting to use the camera. The camera remains available as an optional secondary tool. Android's Back button returns to turntable mode; the camera page also has its own Turntable button.

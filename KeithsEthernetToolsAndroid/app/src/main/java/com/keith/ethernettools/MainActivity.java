@@ -91,9 +91,107 @@ public class MainActivity extends Activity {
             String status=NetTools.ping(ip);boolean up=status.startsWith("UP");pingCount++;if(!up)failedCount++;if(pingCount==1||up!=previousUp||!up)append(ip+" ["+dns+"] "+status+" pings="+pingCount+" failures="+failedCount);previousUp=up;Thread.sleep(30000);
         }});});addButton("Stop Monitoring",()->monitoring=false);addReportPanel();}
     private void traceTab(){addLabel("TRACEROUTE • HOP LATENCY");EditText host=entry("8.8.8.8","Target IP or hostname");addEntry("Destination",host);addButton("Trace (up to 16 hops)",()->async(()->append(NetTools.trace(host.getText().toString().trim(),16))));addReportPanel();}
-    private void switchTab(){addLabel("SWITCH / PORT CONNECTIVITY");EditText host=entry("","Switch IP or name");addEntry("Switch IP / Name",host);EditText port=entry("22","TCP port (22 SSH, 23 Telnet)");addEntry("Port",port);
-        addButton("Test Switch Connection",()->async(()->{String ip=host.getText().toString().trim();int p=Integer.parseInt(port.getText().toString().trim());append("DNS "+ip+" → "+NetTools.resolve(ip));append(NetTools.tcpTest(ip,p,4500));}));
-        content.addView(text("For Cisco port configuration and VLAN details, open the Port & VLAN tab. SSH requires an authorized switch login.",14,0xfff5bd69));addReportPanel();}
+    private void switchTab(){
+        addLabel("SWITCH UTILITIES • FIBER LINK HEALTH");
+        content.addView(text("Cisco IOS / IOS-XE: optical Tx/Rx power, transceiver alarm/warning thresholds, link state, interface errors, and stack members. Read-only SSH.",14,0xffccefff));
+        fiberHostEdit=entry(ciscoHost,"Cisco switch IP or DNS name");
+        fiberUserEdit=entry(ciscoUsername,"Switch SSH username");
+        fiberPassEdit=entry(ciscoPassword,"Switch SSH password");
+        fiberPassEdit.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        fiberEnableEdit=entry(ciscoEnable,"Enable password (optional)");
+        fiberEnableEdit.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        fiberPortEdit=entry("","Optional Te1/1/1; leave blank to scan all");
+        addEntry("Cisco Switch IP / Hostname",fiberHostEdit);
+        addEntry("Username",fiberUserEdit);
+        addEntry("Password",fiberPassEdit);
+        addEntry("Enable Secret (optional)",fiberEnableEdit);
+        addEntry("Fiber Interface (optional)",fiberPortEdit);
+        addButton("SCAN ALL FIBER LINKS + STACK HEALTH",()->scanFiber(false));
+        addButton("CHECK SELECTED FIBER PORT",()->scanFiber(true));
+        addButton("Test SSH Port 22",()->{
+            final String host=fiberHostEdit.getText().toString().trim();
+            if(host.isEmpty()){Toast.makeText(this,"Enter switch IP or name",Toast.LENGTH_LONG).show();return;}
+            async(()->{append("DNS "+host+" → "+NetTools.resolve(host));append(NetTools.tcpTest(host,22,5000));});
+        });
+        content.addView(text("RED = bad optical alarm/failed fiber link. AMBER = warning or only one active fiber observed in a multi-member stack. GREEN = within reported thresholds. GRAY = not enough data.",13,0xffd3e8ff));
+        fiberSummaryView=text(fiberResult,14,Color.WHITE);
+        fiberSummaryView.setTextIsSelectable(true);
+        fiberSummaryView.setTypeface(Typeface.MONOSPACE);
+        fiberSummaryView.setBackgroundColor(PANEL);
+        fiberSummaryView.setPadding(12,16,12,16);
+        fiberSummaryView.setText(styleFiberText(fiberResult));
+        content.addView(fiberSummaryView);
+        addButton("Copy Fiber Health Summary",()->{
+            ((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE))
+                .setPrimaryClip(ClipData.newPlainText("Fiber Health Summary",fiberResult));
+            Toast.makeText(this,"Fiber summary copied",Toast.LENGTH_SHORT).show();
+        });
+        addButton("Share / Email Fiber Report",()->{
+            Intent i=new Intent(Intent.ACTION_SEND);
+            i.setType("text/plain");
+            i.putExtra(Intent.EXTRA_SUBJECT,"Keith's Ethernet Tools - Fiber Health Report");
+            i.putExtra(Intent.EXTRA_TEXT(getReport());
+            startActivity(Intent.createChooser(i,"Share fiber report"));
+        });
+        addReportPanel();
+    }
+    private CharSequence styleFiberText(String value){
+        SpannableStringBuilder text=new SpannableStringBuilder(value);
+        int offset=0;
+        for(String line:value.split("\n",-1)){
+            String upper=line.trim().toUpperCase(Locale.US);
+            int color=-1;
+            if(upper.startsWith("BAD")||upper.startsWith("STATUS: BAD")||upper.contains("ALARM:")||upper.contains("ACTIVE OPTICAL ALARM"))
+                color=Color.rgb(255,80,92);
+            else if(upper.startsWith("WARNING")||upper.startsWith("STATUS: WARNING")||upper.contains("ONLY ONE ACTIVE FIBER"))
+                color=Color.rgb(255,196,56);
+            else if(upper.startsWith("GOOD")||upper.startsWith("STATUS: GOOD"))
+                color=Color.rgb(64,245,125);
+            else if(upper.startsWith("UNKNOWN")||upper.startsWith("STATUS: UNKNOWN"))
+                color=Color.rgb(170,190,205);
+            if(color!=-1&&line.length()>0)
+                text.setSpan(new ForegroundColorSpan(color),offset,offset+line.length(),Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            offset+=line.length()+1;
+        }
+        return text;
+    }
+    private void scanFiber(boolean selectedOnly){
+        final String host=fiberHostEdit.getText().toString().trim();
+        final String user=fiberUserEdit.getText().toString().trim();
+        final String password=fiberPassEdit.getText().toString();
+        final String enable=fiberEnableEdit.getText().toString();
+        final String iface=fiberPortEdit.getText().toString().trim();
+        if(host.isEmpty()||user.isEmpty()||password.isEmpty()){
+            Toast.makeText(this,"Enter Cisco switch IP, username and password",Toast.LENGTH_LONG).show();return;
+        }
+        if(selectedOnly&&!CiscoPortParser.validInterface(iface)){
+            Toast.makeText(this,"Enter a fiber port, for example Te1/1/1",Toast.LENGTH_LONG).show();return;
+        }
+        ciscoHost=host;ciscoUsername=user;ciscoPassword=password;ciscoEnable=enable;
+        final String filter=selectedOnly?iface:"";
+        append("==== FIBER LINK HEALTH: "+host+(selectedOnly?" / "+iface:" / ALL OPTICS")+" ====");
+        fiberResult="Scanning fiber interfaces and switch stack...\n";
+        if(fiberSummaryView!=null)fiberSummaryView.setText(styleFiberText(fiberResult));
+        async(()->{
+            try(CiscoSsh ssh=new CiscoSsh(this,message->append(message))){
+                ssh.connect(host,user,password,enable);
+                Map<String,String> output=ssh.commands(FiberHealthReport.commands());
+                FiberHealthReport.Result result=FiberHealthReport.analyze(output,filter);
+                fiberResult=result.text;
+                append(result.text);
+                handler.post(()->{
+                    if(fiberSummaryView!=null)fiberSummaryView.setText(styleFiberText(result.text));
+                });
+                appendRawSwitchCommands(output);
+            }catch(Exception ex){
+                fiberResult="UNKNOWN | Fiber scan failed: "+ex.getClass().getSimpleName()+": "+ex.getMessage();
+                append(fiberResult);
+                handler.post(()->{
+                    if(fiberSummaryView!=null)fiberSummaryView.setText(styleFiberText(fiberResult));
+                });
+            }
+        });
+    }
     private void nortelTab(){addLabel("NORTEL ERS 5520 • LIVE TELNET SESSION");content.addView(text("WARNING: Telnet sends usernames, passwords and commands unencrypted. Use only on an authorized trusted management network.",14,0xffffb76b));
         nortelHost=entry("","Nortel switch IP");nortelPort=entry("23","Port");nortelUser=entry("RW","RW username");nortelPass=entry("","Nortel password");nortelPass.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
         nortelCommand=entry("show stack-info","Read-only CLI command");addEntry("Switch IP",nortelHost);addEntry("Port",nortelPort);addEntry("Username",nortelUser);addEntry("Password (not saved)",nortelPass);

@@ -125,9 +125,9 @@ public class SpinTachActivity extends Activity implements TextureView.SurfaceTex
         turntableMode.setTextSize(13);
         root.addView(turntableMode, new LinearLayout.LayoutParams(-1, dp(50)));
         turntableMode.setOnClickListener(v -> {
-            Intent intent = new Intent(this, TurntableActivity.class);
-            intent.putExtra("ledColor", ledColor);
-            startActivity(intent);
+            // Camera is an optional screen opened from Turntable Mode.
+            // Closing this activity returns to the running gyroscope display.
+            finish();
         });
         gap(root, 14);
 

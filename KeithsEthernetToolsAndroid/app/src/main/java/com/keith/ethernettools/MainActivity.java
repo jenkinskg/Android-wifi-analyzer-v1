@@ -51,7 +51,8 @@ public class MainActivity extends Activity {
     private void append(String s){String line="["+timestamp.format(new Date())+"] "+s; synchronized(report){report.append(line).append('\n');}handler.post(()->{if(reportView!=null){reportView.setText(getReport());}});}
     private String getReport(){synchronized(report){return report.toString();}}
     private void addReportPanel(){addLabel("SESSION REPORT (select, copy, or share)");reportView=text(getReport(),13,GREEN);reportView.setTextIsSelectable(true);reportView.setTypeface(Typeface.MONOSPACE);reportView.setBackgroundColor(PANEL);reportView.setMinHeight(300);content.addView(reportView);}
-    private void async(Runnable r){pool.execute(()->{try{r.run();}catch(Exception e){append("ERROR "+e.getClass().getSimpleName()+": "+e.getMessage());}});}
+    private interface CheckedRunnable { void run() throws Exception; }
+    private void async(CheckedRunnable r){pool.execute(()->{try{r.run();}catch(Exception e){append("ERROR "+e.getClass().getSimpleName()+": "+e.getMessage());}});}
     private void addTab(){switch(tab){case "Wi-Fi":wifiTab();break;case "Ping Bounce":pingTab();break;case "Traceroute":traceTab();break;case "Switch Test":switchTab();break;case "Nortel Telnet":nortelTab();break;case "Reports":reportsTab();break;}}
     private Network active(){ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);return cm==null?null:cm.getActiveNetwork();}
     private LinkProperties link(){ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=active();return cm==null||n==null?null:cm.getLinkProperties(n);}

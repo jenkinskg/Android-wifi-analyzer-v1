@@ -130,7 +130,7 @@ public class MainActivity extends Activity {
             Intent i=new Intent(Intent.ACTION_SEND);
             i.setType("text/plain");
             i.putExtra(Intent.EXTRA_SUBJECT,"Keith's Ethernet Tools - Fiber Health Report");
-            i.putExtra(Intent.EXTRA_TEXT(getReport());
+            i.putExtra(Intent.EXTRA_TEXT,getReport());
             startActivity(Intent.createChooser(i,"Share fiber report"));
         });
         addReportPanel();

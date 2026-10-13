@@ -6,8 +6,8 @@ android {
         applicationId 'com.keith.ethernettools'
         minSdk 26
         targetSdk 35
-        versionCode 3
-        versionName '3.5.2-android-beta'
+        versionCode 4
+        versionName '3.5.3-android-beta'
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }

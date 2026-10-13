@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Camera permission is requested only if the user explicitly opens Camera Mode. -->
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-feature android:name="android.hardware.camera" android:required="true" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="false" />
     <application
         android:allowBackup="false"
         android:label="Spin Tachometer"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:usesCleartextTraffic="false">
+        <!-- Turntable sensor mode is the launcher and never touches the camera. -->
         <activity android:name=".TurntableActivity"
-            android:exported="false"
-            android:screenOrientation="portrait" />
-        <activity android:name=".SpinTachActivity"
             android:exported="true"
             android:screenOrientation="portrait">
             <intent-filter>
@@ -18,5 +18,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Optical camera mode remains available as an optional screen. -->
+        <activity android:name=".SpinTachActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
     </application>
 </manifest>

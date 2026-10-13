@@ -1,0 +1,57 @@
+name: Build Volvo CYD Gauge Launcher BIN
+
+on:
+  push:
+    branches: [cyd-wifi-analyzer]
+    paths:
+      - 'volvo-cyd-gauge/**'
+      - '.github/workflows/build-volvo-cyd-gauge.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 core
+        run: |
+          arduino-cli config init
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+
+      - name: Install display libraries
+        run: |
+          arduino-cli lib update-index
+          arduino-cli lib install "Adafruit GFX Library"
+          arduino-cli lib install "Adafruit ILI9341"
+
+      - name: Compile
+        run: |
+          mkdir -p build
+          arduino-cli compile --fqbn esp32:esp32:esp32 --output-dir build volvo-cyd-gauge/VolvoCYDGauge
+
+      - name: Prepare Launcher and standalone files
+        run: |
+          set -euxo pipefail
+          cp build/VolvoCYDGauge.ino.bin build/Volvo-CYD-Gauge-Launcher.bin
+          cp build/VolvoCYDGauge.ino.bootloader.bin build/bootloader.bin
+          cp build/VolvoCYDGauge.ino.partitions.bin build/partitions.bin
+          BOOTAPP=$(find ~/.arduino15/packages/esp32/hardware/esp32 -path '*/tools/partitions/boot_app0.bin' | head -n 1)
+          cp "$BOOTAPP" build/boot_app0.bin
+          python3 -m pip install 'esptool==4.8.1'
+          python3 -m esptool --chip esp32 merge_bin \
+            -o build/Volvo-CYD-Gauge-STANDALONE-MERGED.bin \
+            0x1000 build/bootloader.bin \
+            0x8000 build/partitions.bin \
+            0xE000 build/boot_app0.bin \
+            0x10000 build/Volvo-CYD-Gauge-Launcher.bin
+          cp volvo-cyd-gauge/VolvoCYDGauge/VolvoCYDGauge.ino build/VolvoCYDGauge.ino
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Volvo-CYD-Gauge
+          path: build/
+          retention-days: 30

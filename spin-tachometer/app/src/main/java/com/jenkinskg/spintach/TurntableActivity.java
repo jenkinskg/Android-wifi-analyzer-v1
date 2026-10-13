@@ -112,10 +112,13 @@ public final class TurntableActivity extends Activity implements SensorEventList
         scroll.addView(main);
         setContentView(scroll);
 
-        Button back = button("◀  CAMERA MODE", Color.rgb(38,68,115));
+        // Optical mode is strictly optional. No camera is initialized or
+        // camera permission requested while Turntable Mode is running.
+        Button back = button("CAMERA MODE (OPTIONAL)", Color.rgb(38,68,115));
         LinearLayout.LayoutParams backLp = new LinearLayout.LayoutParams(-1, dp(43));
         main.addView(back, backLp);
-        back.setOnClickListener(v -> finish());
+        back.setOnClickListener(v ->
+                startActivity(new Intent(this, SpinTachActivity.class)));
         space(main, 14);
         TextView heading = label("VINYL  /  TURNTABLE", 22, Color.WHITE, true);
         heading.setLetterSpacing(.065f);

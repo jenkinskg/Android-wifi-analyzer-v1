@@ -11,6 +11,9 @@ import android.net.*;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.text.InputType;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
 import android.view.*;
 import android.widget.*;
 import java.net.*;
@@ -29,8 +32,11 @@ public class MainActivity extends Activity {
     private EditText pingAddress,nortelHost,nortelPort,nortelUser,nortelPass,nortelCommand;
     private TextView wifiInfo; private int pingCount=0,failedCount=0;private boolean previousUp=false;
     // Credentials survive navigation within this app session but are not saved to disk.
-    private String ciscoHost="",ciscoUsername="",ciscoPassword="",ciscoEnable="",ciscoPort="",targetMac="",targetIp="";
-    private EditText ciscoHostEdit,ciscoUserEdit,ciscoPassEdit,ciscoEnableEdit,ciscoPortEdit,ciscoMacEdit,ciscoIpEdit;
+    private String ciscoHost="",ciscoUsername="",ciscoPassword="",ciscoEnable="",ciscoPort="";
+    private String fiberResult="Run Fiber Link Health to view transceiver readings and stack warnings.";
+    private TextView fiberSummaryView;
+    private EditText fiberHostEdit,fiberUserEdit,fiberPassEdit,fiberEnableEdit,fiberPortEdit;
+    private EditText ciscoHostEdit,ciscoUserEdit,ciscoPassEdit,ciscoEnableEdit,ciscoPortEdit;
     private final SimpleDateFormat timestamp=new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.US);
     @Override public void onCreate(Bundle b){super.onCreate(b);showScreen();if(android.os.Build.VERSION.SDK_INT>=23 && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION},11);}
     @Override public void onDestroy(){monitoring=false;if(nortel!=null)nortel.close();pool.shutdownNow();super.onDestroy();}
@@ -42,9 +48,9 @@ public class MainActivity extends Activity {
     private void addButton(String caption,Runnable runnable){content.addView(btn(caption,runnable));}
     private void showScreen(){
         LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(BG);
-        TextView head=text("⚡ KEITH'S ETHERNET TOOLS  •  ANDROID 3.5.2 BETA",19,GREEN);head.setTypeface(Typeface.DEFAULT,Typeface.BOLD);root.addView(head);
+        TextView head=text("⚡ KEITH'S ETHERNET TOOLS  •  ANDROID 3.5.3 BETA",19,GREEN);head.setTypeface(Typeface.DEFAULT,Typeface.BOLD);root.addView(head);
         HorizontalScrollView nav=new HorizontalScrollView(this);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);
-        for(String name:new String[]{"Wi-Fi","Ping Bounce","Traceroute","Port & VLAN","Switch Test","Nortel Telnet","Reports"}){
+        for(String name:new String[]{"Wi-Fi","Ping Bounce","Traceroute","Port & VLAN","Switch Utils","Nortel Telnet","Reports"}){
             Button b=btn(name,()->{tab=name;showScreen();});if(tab.equals(name))b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff248858));row.addView(b);
         }
         nav.addView(row);root.addView(nav);
@@ -56,7 +62,7 @@ public class MainActivity extends Activity {
     private void addReportPanel(){addLabel("SESSION REPORT (select, copy, or share)");reportView=text(getReport(),13,GREEN);reportView.setTextIsSelectable(true);reportView.setTypeface(Typeface.MONOSPACE);reportView.setBackgroundColor(PANEL);reportView.setMinHeight(300);content.addView(reportView);}
     private interface CheckedRunnable { void run() throws Exception; }
     private void async(CheckedRunnable r){pool.execute(()->{try{r.run();}catch(Exception e){append("ERROR "+e.getClass().getSimpleName()+": "+e.getMessage());}});}
-    private void addTab(){switch(tab){case "Wi-Fi":wifiTab();break;case "Ping Bounce":pingTab();break;case "Traceroute":traceTab();break;case "Port & VLAN":portVlanTab();break;case "Switch Test":switchTab();break;case "Nortel Telnet":nortelTab();break;case "Reports":reportsTab();break;}}
+    private void addTab(){switch(tab){case "Wi-Fi":wifiTab();break;case "Ping Bounce":pingTab();break;case "Traceroute":traceTab();break;case "Port & VLAN":portVlanTab();break;case "Switch Utils":switchTab();break;case "Nortel Telnet":nortelTab();break;case "Reports":reportsTab();break;}}
     private Network active(){ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);return cm==null?null:cm.getActiveNetwork();}
     private LinkProperties link(){ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=active();return cm==null||n==null?null:cm.getLinkProperties(n);}
     private String activeNetwork(){
@@ -116,33 +122,12 @@ public class MainActivity extends Activity {
         ciscoEnableEdit=entry(ciscoEnable,"Enable secret (optional)");
         ciscoEnableEdit.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
         ciscoPortEdit=entry(ciscoPort,"Gi1/0/24");
-        ciscoMacEdit=entry(targetMac,"aa:bb:cc:dd:ee:ff");
-        ciscoIpEdit=entry(targetIp,"10.120.10.30");
         addEntry("Cisco Switch Address (SSH Port 22)",ciscoHostEdit);
         addEntry("Switch Username",ciscoUserEdit);addEntry("Switch Password",ciscoPassEdit);
         addEntry("Enable Password (only if needed)",ciscoEnableEdit);
         addEntry("Physical Port (optional, for single-port detail)",ciscoPortEdit);
-        addEntry("Device Wired MAC (optional, for find port)",ciscoMacEdit);
-        addEntry("Device IP (optional; only if switch has its ARP entry)",ciscoIpEdit);
-        addButton("Use This Tablet's Ethernet MAC (if accessible)",()->{
-            try{
-                String found="";
-                Enumeration<java.net.NetworkInterface> all=java.net.NetworkInterface.getNetworkInterfaces();
-                while(all!=null&&all.hasMoreElements()){
-                    java.net.NetworkInterface ni=all.nextElement();
-                    if(!ni.isUp()||!(ni.getName().matches("(?i)(?:eth|en|usb|rndis).*")))continue;
-                    byte[] mac=ni.getHardwareAddress();
-                    if(mac==null||mac.length!=6)continue;
-                    StringBuilder b=new StringBuilder();for(byte part:mac)b.append(String.format(Locale.US,"%02x",part&255));
-                    found=CiscoPortParser.dottedMac(b.toString());break;
-                }
-                if(found.isEmpty())append("Ethernet MAC unavailable from Android. Enter the wired device MAC manually.");
-                else{ciscoMacEdit.setText(found);append("Detected local Ethernet MAC candidate: "+found+". Confirm it is the MAC learned by the switch.");}
-            }catch(Exception e){append("Android did not expose Ethernet MAC: "+e.getMessage());}
-        });
         addButton("SHOW ALL PORTS + VLAN CHART",()->portVlanAction("all"));
         addButton("SHOW PORT: ACCESS + VOICE + TRUNK VLAN",()->portVlanAction("port"));
-        addButton("FIND DEVICE PORT BY IP / MAC",()->portVlanAction("find"));
         addButton("Copy Complete Report",()->{
             ((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Switch Port VLAN report",getReport()));
             Toast.makeText(this,"Report copied",Toast.LENGTH_SHORT).show();
@@ -150,7 +135,7 @@ public class MainActivity extends Activity {
         addButton("Email / Share Report",()->{
             Intent i=new Intent(Intent.ACTION_SEND);i.setType("text/plain");i.putExtra(Intent.EXTRA_SUBJECT,"Keith's Ethernet Tools - Switch Port VLAN Report");i.putExtra(Intent.EXTRA_TEXT,getReport());startActivity(Intent.createChooser(i,"Share Port Report"));
         });
-        content.addView(text("Android normally cannot capture CDP/LLDP frames without special network access. For reliable port identification, enter a switch IP and the device's wired MAC. Credentials are kept only until you close the app; passwords never appear in reports.",13,0xffe6c68e));
+        content.addView(text("The nonworking AP finder was removed. Enter a Cisco switch IP and a port to view VLAN details. Credentials stay in memory only while the app is open.",13,0xffe6c68e));
         addReportPanel();
     }
     private void portVlanAction(String action){
@@ -159,14 +144,9 @@ public class MainActivity extends Activity {
         final String pass=ciscoPassEdit.getText().toString();
         final String enable=ciscoEnableEdit.getText().toString();
         final String port=ciscoPortEdit.getText().toString().trim();
-        final String mac=ciscoMacEdit.getText().toString().trim();
-        final String ip=ciscoIpEdit.getText().toString().trim();
         if(host.isEmpty()||user.isEmpty()||pass.isEmpty()){Toast.makeText(this,"Enter switch IP, username and password",Toast.LENGTH_LONG).show();return;}
         if(action.equals("port")&&!CiscoPortParser.validInterface(port)){Toast.makeText(this,"Enter a port such as Gi1/0/24",Toast.LENGTH_LONG).show();return;}
-        if(action.equals("find")&&mac.isEmpty()&&ip.isEmpty()){Toast.makeText(this,"Enter a wired MAC or device IP",Toast.LENGTH_LONG).show();return;}
-        if(!ip.isEmpty()&&!CiscoPortParser.validIp(ip)){Toast.makeText(this,"Enter a valid IPv4 address",Toast.LENGTH_LONG).show();return;}
-        if(!mac.isEmpty()){try{CiscoPortParser.macNormalize(mac);}catch(Exception e){Toast.makeText(this,"Invalid MAC address",Toast.LENGTH_LONG).show();return;}}
-        ciscoHost=host;ciscoUsername=user;ciscoPassword=pass;ciscoEnable=enable;ciscoPort=port;targetMac=mac;targetIp=ip;
+        ciscoHost=host;ciscoUsername=user;ciscoPassword=pass;ciscoEnable=enable;ciscoPort=port;
         append("==== CISCO "+host+" / "+action.toUpperCase(Locale.US)+" PORT & VLAN REPORT ====");
         async(()->{
             try(CiscoSsh ssh=new CiscoSsh(this,msg->append(msg))){
@@ -184,40 +164,7 @@ public class MainActivity extends Activity {
                     appendRawSwitchCommands(vlanResults);
                 }else if(action.equals("port")){
                     queryCiscoPort(ssh,port);
-                }else{
-                    String resolved=mac;
-                    if(resolved.isEmpty()){
-                        append("Checking this switch's ARP table for device IP "+ip);
-                        String arp=ssh.run("show ip arp "+ip,9500);
-                        append("ARP RESULT:\n"+arp);
-                        resolved=CiscoPortParser.arpMac(arp,ip);
-                        if(resolved.isEmpty()){
-                            append("MAC NOT FOUND in this switch's ARP table. The VLAN gateway may be on another router/switch. Enter the AP/device wired MAC to continue.");
-                            return;
-                        }
-                        append("Resolved wired MAC "+resolved+" from ARP entry");
-                    }
-                    String dotted=CiscoPortParser.dottedMac(resolved);
-                    String command="show mac address-table address "+dotted;
-                    String output=ssh.run(command,12000);
-                    List<CiscoPortParser.Match> matches=CiscoPortParser.findMac(output,dotted);
-                    if(matches.isEmpty()){
-                        append("No matching entry from specific-MAC lookup; trying dynamic table");
-                        String fallback=ssh.run("show mac address-table dynamic",14500);
-                        matches=CiscoPortParser.findMac(fallback,dotted);
-                        if(matches.isEmpty()){append("NOT FOUND: The MAC was not present on this switch's forwarding table. Check another switch, VLAN, or device wired MAC.");return;}
-                    }
-                    for(CiscoPortParser.Match entry:matches){
-                        append("FOUND MAC TABLE ENTRY: "+entry.toString());
-                        if(CiscoPortParser.isLogicalUplink(entry.port)){
-                            append("PORT-CHANNEL / UPLINK CANDIDATE only. This is NOT a verified AP access port. Search a downstream switch.");
-                            reportSwitchCommands(ssh,Collections.singletonList("show etherchannel summary"));
-                        }else if(CiscoPortParser.validInterface(entry.port)){
-                            queryCiscoPort(ssh,entry.port);
-                        }else{
-                            append("Unable to query port "+entry.port+" automatically; inspect the MAC-table entry above.");
-                        }
-                    }
+
                 }
             }catch(Exception e){
                 append("CISCO SSH ERROR: "+e.getClass().getSimpleName()+": "+e.getMessage());

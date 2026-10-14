@@ -20,7 +20,7 @@ jobs:
       - name: Ensure Android platform 35
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          "$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0"
       - name: Build APK
         working-directory: URL-to-MP3
         run: gradle --no-daemon :app:assembleDebug

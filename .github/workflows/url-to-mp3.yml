@@ -1,7 +1,7 @@
 name: Build URL to MP3 APK
 on:
   push:
-    branches: [url-to-mp3-v2]
+    branches: [url-to-mp3-v3]
   workflow_dispatch:
 jobs:
   build:
@@ -20,10 +20,20 @@ jobs:
       - uses: android-actions/setup-android@v4
         with:
           packages: "platform-tools platforms;android-35 build-tools;35.0.0"
+      - name: Extract native BitTorrent library (ARM64)
+        working-directory: URL-to-MP3
+        run: |
+          gradle --no-daemon :app:dependencies --configuration debugRuntimeClasspath
+          JAR="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.libtorrent4j/libtorrent4j-android-arm64/2.1.0-39" -name '*.jar' | head -1)"
+          test -s "$JAR"
+          unzip -l "$JAR" | grep 'lib/arm64-v8a/libtorrent4j.so'
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          unzip -p "$JAR" lib/arm64-v8a/libtorrent4j.so > app/src/main/jniLibs/arm64-v8a/libtorrent4j.so
+          test -s app/src/main/jniLibs/arm64-v8a/libtorrent4j.so
       - name: Build APK
         working-directory: URL-to-MP3
         run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: URL-to-MP3-v2-APK
+          name: URL-to-MP3-v3-APK
           path: URL-to-MP3/app/build/outputs/apk/debug/app-debug.apk

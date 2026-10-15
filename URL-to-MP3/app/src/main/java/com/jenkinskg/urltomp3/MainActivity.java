@@ -83,11 +83,14 @@ public class MainActivity extends Activity {
         LinearLayout root=new LinearLayout(this);root.setOrientation(1);
         root.setPadding(dp(20),dp(25),dp(20),dp(25));
         scroll.addView(root);setContentView(scroll);
-        root.addView(label("AUDIO CONVERTER / ANDROID",12,accent,true));
-        TextView head=label("URL → MP3",34,Color.WHITE,true);
+        root.addView(label("MUSIC & MOVIE DOWNLOADER / ANDROID",12,accent,true));
+        TextView head=label("MUSIC / URL → MP3",30,Color.WHITE,true);
         head.setPadding(0,dp(8),0,dp(8));root.addView(head);
         TextView intro=label("Convert supported video links into real MP3 audio files. No Termux required.",15,0xffb5c6ce,false);
         intro.setPadding(0,0,0,dp(18));root.addView(intro);
+        Button movieTab=button("MOVIES / FULL VIDEO / TORRENTS",true);
+        add(root,movieTab,55,4);
+        movieTab.setOnClickListener(v->startActivity(new Intent(this,MovieActivity.class)));
         LinearLayout box=new LinearLayout(this);box.setOrientation(1);box.setPadding(dp(14),dp(15),dp(14),dp(15));
         box.setBackground(bg(panel,16));root.addView(box);
         box.addView(label("PASTE VIDEO URL",12,0xffb5c6ce,true));

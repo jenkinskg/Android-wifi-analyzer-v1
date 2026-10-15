@@ -26,6 +26,8 @@ import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.json.JSONObject;
+import org.json.JSONArray;
 import kotlin.Unit;
 import kotlin.jvm.functions.Function3;
 
@@ -37,7 +39,17 @@ public class MainActivity extends Activity {
     private EditText urlField;
     private Spinner quality;
     private ProgressBar bar;
-    private Button convertBtn,cancelBtn,shareBtn,playBtn;
+    private Button convertBtn,cancelBtn,shareBtn,playBtn,searchBtn,updateBtn,selectAllBtn,convertSelectedBtn;
+    private EditText searchField;
+    private LinearLayout searchResults;
+    private final ArrayList<VideoChoice> choices=new ArrayList<>();
+    private volatile boolean searching=false;
+    private boolean selectAllNext=true;
+    private static final class VideoChoice {
+        final String url, title;
+        final CheckBox check;
+        VideoChoice(String url,String title,CheckBox check){this.url=url;this.title=title;this.check=check;}
+    }
     private TextView status,detail;
     private volatile boolean running=false;
     private volatile String jobId=null;
@@ -54,7 +66,14 @@ public class MainActivity extends Activity {
             try{
                 YoutubeDL.getInstance().init(getApplicationContext());
                 FFmpeg.getInstance().init(getApplicationContext());
-                update("Ready","Paste a link, then tap Convert.");
+                // Try to get a current extractor automatically; failures leave bundled yt-dlp usable.
+                try {
+                    update("Checking yt-dlp updates…","Connecting to the official yt-dlp release server");
+                    YoutubeDL.getInstance().updateYoutubeDL(getApplicationContext(), YoutubeDL.UpdateChannel.STABLE.INSTANCE);
+                    update("Ready","Downloader updated. Search for music or paste a link.");
+                } catch(Exception updateError) {
+                    update("Ready","Auto-update unavailable. Tap UPDATE DOWNLOADER to retry.");
+                }
             }catch(Exception e){update("Engine error",err(e));}
         });
     }
@@ -85,6 +104,34 @@ public class MainActivity extends Activity {
             if(data!=null&&data.getItemCount()>0)urlField.setText(findLink(data.getItemAt(0).coerceToText(this).toString()));
             else Toast.makeText(this,"Clipboard empty",Toast.LENGTH_SHORT).show();
         });
+        TextView sh=label("SEARCH YOUTUBE",13,accent,true);
+        sh.setPadding(0,dp(16),0,dp(5));box.addView(sh);
+        searchField=new EditText(this);
+        searchField.setTextSize(15);searchField.setTextColor(Color.WHITE);
+        searchField.setHintTextColor(0xffa8b8c7);
+        searchField.setSingleLine(true);
+        searchField.setHint("Band, artist or song name");
+        searchField.setBackground(bg(0xff354452,10));
+        searchField.setPadding(dp(12),dp(10),dp(12),dp(10));add(box,searchField,52,6);
+        searchBtn=button("SEARCH FOR SONGS",false);add(box,searchBtn,48,8);
+        searchBtn.setOnClickListener(v->searchVideos());
+        searchResults=new LinearLayout(this);
+        searchResults.setOrientation(1);
+        box.addView(searchResults);
+        LinearLayout rowBtns=new LinearLayout(this);rowBtns.setOrientation(LinearLayout.HORIZONTAL);
+        selectAllBtn=button("SELECT ALL",false);
+        rowBtns.addView(selectAllBtn,new LinearLayout.LayoutParams(0,dp(48),1));
+        selectAllBtn.setOnClickListener(v->{
+            for(VideoChoice c:choices)c.check.setChecked(selectAllNext);
+            selectAllNext=!selectAllNext;
+            selectAllBtn.setText(selectAllNext?"SELECT ALL":"DESELECT ALL");
+        });
+        convertSelectedBtn=button("CONVERT SELECTED",true);
+        LinearLayout.LayoutParams cbp=new LinearLayout.LayoutParams(0,dp(48),1.5f);
+        cbp.leftMargin=dp(8);rowBtns.addView(convertSelectedBtn,cbp);
+        convertSelectedBtn.setOnClickListener(v->startSelected());
+        add(box,rowBtns,52,10);rowBtns.setVisibility(View.GONE);
+        rowBtns.setTag("results-buttons");
         TextView qual=label("MP3 QUALITY",12,0xffb5c6ce,true);qual.setPadding(0,dp(16),0,0);box.addView(qual);
         quality=new Spinner(this);
         String[] choices={"128 kbps","192 kbps","320 kbps"};
@@ -92,6 +139,8 @@ public class MainActivity extends Activity {
         quality.setSelection(1);add(box,quality,51,3);
         convertBtn=button("CONVERT TO MP3",true);add(box,convertBtn,58,10);
         convertBtn.setOnClickListener(v->startConvert());
+        updateBtn=button("UPDATE DOWNLOADER",false);add(box,updateBtn,43,8);
+        updateBtn.setOnClickListener(v->updateDownloader());
         cancelBtn=button("CANCEL",false);add(box,cancelBtn,45,8);
         cancelBtn.setEnabled(false);
         cancelBtn.setOnClickListener(v->{
@@ -119,68 +168,188 @@ public class MainActivity extends Activity {
             i.putExtra(Intent.EXTRA_STREAM,lastSaved);i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             startActivity(Intent.createChooser(i,"Share MP3"));
         });
-        TextView foot=label("Only download audio you own or have permission to save. Some sites may block downloads.",12,0xff9aaab9,false);
+        TextView foot=label("Search results come from YouTube. Download content only if you have permission. YouTube may restrict some tracks.",12,0xff9aaab9,false);
         foot.setPadding(0,dp(22),0,0);root.addView(foot);
     }
+    private void updateDownloader(){
+        if(running||searching){Toast.makeText(this,"Finish current task first",Toast.LENGTH_SHORT).show();return;}
+        updateBtn.setEnabled(false);
+        update("Updating downloader…","Checking the official yt-dlp stable release");
+        executor.execute(()->{
+            try{
+                YoutubeDL.getInstance().init(getApplicationContext());
+                YoutubeDL.UpdateStatus result=YoutubeDL.getInstance().updateYoutubeDL(
+                    getApplicationContext(),YoutubeDL.UpdateChannel.STABLE.INSTANCE);
+                update("Downloader ready",result==YoutubeDL.UpdateStatus.DONE?
+                    "Updated successfully. Retry the song.":"Already up to date. Retry your download.");
+            }catch(Exception e){update("Update failed",shortError(e));}
+            finally{main.post(()->updateBtn.setEnabled(true));}
+        });
+    }
+    private void searchVideos(){
+        if(running||searching)return;
+        String query=searchField.getText().toString().trim();
+        if(query.length()<2){searchField.setError("Enter a band or song");return;}
+        searching=true;searchBtn.setEnabled(false);convertSelectedBtn.setEnabled(false);
+        searchResults.removeAllViews();choices.clear();
+        update("Searching YouTube…","Looking for: "+query);
+        executor.execute(()->{
+            try{
+                YoutubeDL.getInstance().init(getApplicationContext());
+                YoutubeDLRequest req=new YoutubeDLRequest("ytsearch15:"+query);
+                req.addOption("--flat-playlist");
+                req.addOption("--dump-single-json");
+                req.addOption("--skip-download");
+                req.addOption("--no-warnings");
+                String response=YoutubeDL.getInstance().execute(req,null,null).getOut();
+                JSONObject json=new JSONObject(response.trim());
+                JSONArray entries=json.optJSONArray("entries");
+                ArrayList<String[]> found=new ArrayList<>();
+                if(entries!=null)for(int i=0;i<entries.length();i++){
+                    JSONObject item=entries.optJSONObject(i);
+                    if(item==null)continue;
+                    String id=item.optString("id","");
+                    String url=item.optString("webpage_url","");
+                    if(id.matches("[a-zA-Z0-9_-]{11}"))url="https://www.youtube.com/watch?v="+id;
+                    if(!url.startsWith("https://"))continue;
+                    String title=item.optString("title","Untitled video");
+                    String creator=item.optString("channel",item.optString("uploader",""));
+                    found.add(new String[]{url,title,creator});
+                }
+                main.post(()->showSearchResults(found));
+                update(found.isEmpty()?"No matching videos":"Search complete",
+                    found.size()+" matches. Check the songs you want, then tap CONVERT SELECTED.");
+            }catch(Exception e){
+                update("Search failed",shortError(e)+" — Try UPDATE DOWNLOADER, then search again.");
+            }finally{
+                searching=false;
+                main.post(()->{searchBtn.setEnabled(true);convertSelectedBtn.setEnabled(true);});
+            }
+        });
+    }
+    private void showSearchResults(ArrayList<String[]> found){
+        searchResults.removeAllViews();choices.clear();selectAllNext=true;
+        selectAllBtn.setText("SELECT ALL");
+        for(String[] entry:found){
+            CheckBox ck=new CheckBox(this);
+            ck.setButtonTintList(ColorStateList.valueOf(accent));
+            ck.setTextColor(Color.WHITE);ck.setTextSize(14);
+            ck.setPadding(dp(2),dp(9),dp(2),dp(9));
+            String creator=entry[2].isEmpty()?"":"\n"+entry[2];
+            ck.setText(entry[1]+creator);
+            searchResults.addView(ck,new LinearLayout.LayoutParams(-1,-2));
+            choices.add(new VideoChoice(entry[0],entry[1],ck));
+        }
+        View b=((View)searchResults.getParent()).findViewWithTag("results-buttons");
+        if(b!=null)b.setVisibility(found.isEmpty()?View.GONE:View.VISIBLE);
+    }
+    private void startSelected(){
+        if(running||searching)return;
+        ArrayList<String> urls=new ArrayList<>();
+        for(VideoChoice c:choices)if(c.check.isChecked())urls.add(c.url);
+        if(urls.isEmpty()){
+            Toast.makeText(this,"Check at least one song",Toast.LENGTH_LONG).show();
+            return;
+        }
+        startBatch(urls);
+    }
     private void startConvert(){
-        if(running)return;
+        if(running||searching)return;
         String url=findLink(urlField.getText().toString());
         if(!url.startsWith("https://")&&!url.startsWith("http://")){
             urlField.setError("Enter a complete URL");return;
         }
+        ArrayList<String> urls=new ArrayList<>();urls.add(url);
+        startBatch(urls);
+    }
+    private void startBatch(ArrayList<String> urls){
+        if(running||searching)return;
         running=true;cancelled.set(false);lastSaved=null;
-        bar.setProgress(0);convertBtn.setEnabled(false);cancelBtn.setEnabled(true);
+        bar.setProgress(0);convertBtn.setEnabled(false);
+        convertSelectedBtn.setEnabled(false);searchBtn.setEnabled(false);
+        updateBtn.setEnabled(false);cancelBtn.setEnabled(true);
         playBtn.setEnabled(false);shareBtn.setEnabled(false);
         String rate=new String[]{"128K","192K","320K"}[quality.getSelectedItemPosition()];
-        update("Downloading audio…",url);
-        executor.execute(()->doConvert(url,rate));
+        executor.execute(()->doConvertBatch(urls,rate));
     }
-    private void doConvert(String url,String rate){
-        File working=null;
+    private void doConvertBatch(ArrayList<String> urls,String rate){
+        int success=0;int failed=0;String lastProblem="";
         try{
             YoutubeDL.getInstance().init(getApplicationContext());
             FFmpeg.getInstance().init(getApplicationContext());
-            File root=getExternalFilesDir(Environment.DIRECTORY_MUSIC);
-            if(root==null)throw new IOException("Storage not available");
-            working=new File(root,"working-"+UUID.randomUUID());
-            if(!working.mkdirs())throw new IOException("Cannot create temp folder");
-            jobId="mp3-"+UUID.randomUUID();
-            YoutubeDLRequest req=new YoutubeDLRequest(url);
-            req.addOption("--no-playlist");
-            req.addOption("--extract-audio");
-            req.addOption("--audio-format","mp3");
-            req.addOption("--audio-quality",rate);
-            req.addOption("-f","bestaudio/best");
-            req.addOption("-o",new File(working,"%(title).100B-%(id)s.%(ext)s").getAbsolutePath());
-            YoutubeDL.getInstance().execute(req,jobId,new Function3<Float,Long,String,Unit>(){
-                @Override public Unit invoke(Float percent,Long eta,String line){
-                    if(percent!=null)main.post(()->bar.setProgress(Math.min(94,Math.max(0,percent.intValue()))));
-                    if(line!=null&&!line.isEmpty()){
-                        final String txt=line.length()>240?line.substring(0,240):line;
-                        main.post(()->{if(!cancelled.get())detail.setText(txt);});
-                    }
-                    return Unit.INSTANCE;
+            for(int i=0;i<urls.size();i++){
+                if(cancelled.get())break;
+                final int number=i+1;
+                File working=null;
+                try{
+                    update("Converting "+number+" of "+urls.size(),"Requesting the audio stream…");
+                    main.post(()->bar.setProgress(0));
+                    File root=getExternalFilesDir(Environment.DIRECTORY_MUSIC);
+                    if(root==null)throw new IOException("Storage not available");
+                    working=new File(root,"working-"+UUID.randomUUID());
+                    if(!working.mkdirs())throw new IOException("Cannot create temp folder");
+                    jobId="mp3-"+UUID.randomUUID();
+                    YoutubeDLRequest req=new YoutubeDLRequest(urls.get(i));
+                    req.addOption("--no-playlist");
+                    req.addOption("--extract-audio");
+                    req.addOption("--audio-format","mp3");
+                    req.addOption("--audio-quality",rate);
+                    req.addOption("-f","bestaudio/best");
+                    req.addOption("--no-warnings");
+                    req.addOption("--no-mtime");
+                    req.addOption("-o",new File(working,"%(title).100B-%(id)s.%(ext)s").getAbsolutePath());
+                    YoutubeDL.getInstance().execute(req,jobId,new Function3<Float,Long,String,Unit>(){
+                        @Override public Unit invoke(Float percent,Long eta,String line){
+                            if(percent!=null)main.post(()->bar.setProgress(Math.min(96,Math.max(0,percent.intValue()))));
+                            if(line!=null&&!line.isEmpty()){
+                                final String msg=line.length()>180?line.substring(0,180):line;
+                                main.post(()->{if(!cancelled.get())detail.setText(number+"/"+urls.size()+" • "+msg);});
+                            }
+                            return Unit.INSTANCE;
+                        }
+                    });
+                    if(cancelled.get())break;
+                    File[] mp3s=working.listFiles((dir,name)->name.toLowerCase(Locale.ROOT).endsWith(".mp3"));
+                    if(mp3s==null||mp3s.length==0)throw new IOException("No MP3 was generated");
+                    update("Saving "+number+" of "+urls.size(),mp3s[0].getName());
+                    Uri saved=save(mp3s[0]);lastSaved=saved;
+                    success++;
+                    final String filename=mp3s[0].getName();
+                    main.post(()->{
+                        playBtn.setEnabled(true);shareBtn.setEnabled(true);
+                        detail.setText("Saved: "+filename);
+                    });
+                }catch(Exception e){
+                    if(cancelled.get())break;
+                    failed++;lastProblem=shortError(e);
+                    update("Failed: "+number+" of "+urls.size(),lastProblem);
+                }finally{
+                    jobId=null;
+                    if(working!=null)remove(working);
                 }
-            });
-            if(cancelled.get())throw new IOException("Cancelled");
-            File[] mp3s=working.listFiles((dir,name)->name.toLowerCase(Locale.ROOT).endsWith(".mp3"));
-            if(mp3s==null||mp3s.length==0)throw new IOException("No MP3 was generated for this link");
-            update("Saving MP3…",mp3s[0].getName());
-            final String filename=mp3s[0].getName();
-            Uri saved=save(mp3s[0]);lastSaved=saved;
-            main.post(()->{
-                bar.setProgress(100);
-                update("MP3 saved!","Music / URL to MP3 / "+filename);
-                playBtn.setEnabled(true);shareBtn.setEnabled(true);
-                Toast.makeText(this,"MP3 saved in Music",Toast.LENGTH_LONG).show();
-            });
-        }catch(Exception e){update("Conversion failed",cancelled.get()?"Cancelled":err(e));}
-        finally{
-            jobId=null;
-            if(working!=null)remove(working);
+            }
+            String summary=success+" MP3 saved, "+failed+" failed";
+            if(cancelled.get())update("Conversion cancelled",summary);
+            else if(failed>0)update("Some conversions failed",summary+"\n"+lastProblem);
+            else update("Conversion complete",summary+" — Music / URL to MP3");
+            if(success>0)main.post(()->bar.setProgress(100));
+        }finally{
             running=false;
-            main.post(()->{convertBtn.setEnabled(true);cancelBtn.setEnabled(false);});
+            main.post(()->{
+                convertBtn.setEnabled(true);convertSelectedBtn.setEnabled(true);
+                searchBtn.setEnabled(true);updateBtn.setEnabled(true);
+                cancelBtn.setEnabled(false);
+            });
         }
+    }
+    private String shortError(Exception e){
+        String msg=err(e);
+        if(msg.contains("HTTP Error 403")||msg.contains("403: Forbidden"))
+            return "YouTube blocked this audio stream (HTTP 403). Tap UPDATE DOWNLOADER and retry. Some videos may remain restricted.";
+        if(msg.contains("Sign in")||msg.contains("login required"))
+            return "This video requires sign-in or is restricted.";
+        if(msg.length()>450)return msg.substring(msg.length()-450);
+        return msg;
     }
     private Uri save(File file)throws IOException{
         ContentValues val=new ContentValues();

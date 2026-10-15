@@ -23,8 +23,9 @@ jobs:
       - name: Extract native BitTorrent library ARM64
         working-directory: URL-to-MP3
         run: |
-          gradle --no-daemon :app:dependencies --configuration debugRuntimeClasspath
-          JAR="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.libtorrent4j/libtorrent4j-android-arm64/2.1.0-39" -name '*.jar' | head -1)"
+          gradle --no-daemon :app:compileDebugJavaWithJavac
+          JAR="$(find "$HOME/.gradle" -name 'libtorrent4j-android-arm64-2.1.0-39.jar' -print -quit)"
+          echo "Native jar: $JAR"
           test -s "$JAR"
           unzip -Z1 "$JAR"
           ENTRY="$(unzip -Z1 "$JAR" | grep 'libtorrent4j.so' | head -1)"

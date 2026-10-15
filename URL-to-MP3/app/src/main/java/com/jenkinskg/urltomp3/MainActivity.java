@@ -275,8 +275,13 @@ public class MainActivity extends Activity {
     private void doConvertBatch(ArrayList<String> urls,String rate){
         int success=0;int failed=0;String lastProblem="";
         try{
-            YoutubeDL.getInstance().init(getApplicationContext());
-            FFmpeg.getInstance().init(getApplicationContext());
+            try {
+                YoutubeDL.getInstance().init(getApplicationContext());
+                FFmpeg.getInstance().init(getApplicationContext());
+            } catch (Exception initError) {
+                update("Engine error",shortError(initError));
+                return;
+            }
             for(int i=0;i<urls.size();i++){
                 if(cancelled.get())break;
                 final int number=i+1;

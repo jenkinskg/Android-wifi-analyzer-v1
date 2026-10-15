@@ -1,0 +1,46 @@
+name: Build Music Movie Downloader v4 APK
+on:
+  push:
+    branches: [url-to-mp3-v4]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out v4 sources
+        uses: actions/checkout@v4
+      - name: Configure Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Configure Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Configure Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
+      - name: Compile Java and resolve native BitTorrent jar
+        working-directory: URL-to-MP3
+        run: |
+          gradle --no-daemon :app:compileDebugJavaWithJavac
+          JAR="$(find "$HOME/.gradle" -name 'libtorrent4j-android-arm64-2.1.0-39.jar' -print -quit)"
+          test -s "$JAR"
+          ENTRY="$(unzip -Z1 "$JAR" | grep 'libtorrent4j.so' | head -1)"
+          test -n "$ENTRY"
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          unzip -p "$JAR" "$ENTRY" > app/src/main/jniLibs/arm64-v8a/libtorrent4j.so
+          test -s app/src/main/jniLibs/arm64-v8a/libtorrent4j.so
+      - name: Build Android v4 debug APK
+        working-directory: URL-to-MP3
+        run: gradle --no-daemon :app:assembleDebug
+      - name: Upload v4 installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Music-Movie-Downloader-v4-APK
+          path: URL-to-MP3/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

@@ -168,6 +168,9 @@ public class MainActivity extends Activity {
             i.putExtra(Intent.EXTRA_STREAM,lastSaved);i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             startActivity(Intent.createChooser(i,"Share MP3"));
         });
+        Button torrentsButton=button("FIND LEGAL MUSIC TORRENTS",false);
+        add(root,torrentsButton,52,20);
+        torrentsButton.setOnClickListener(v->startActivity(new Intent(this,TorrentMusicActivity.class)));
         TextView foot=label("Search results come from YouTube. Download content only if you have permission. YouTube may restrict some tracks.",12,0xff9aaab9,false);
         foot.setPadding(0,dp(22),0,0);root.addView(foot);
     }

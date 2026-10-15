@@ -333,6 +333,8 @@ public class MainActivity extends Activity {
             else if(failed>0)update("Some conversions failed",summary+"\n"+lastProblem);
             else update("Conversion complete",summary+" — Music / URL to MP3");
             if(success>0)main.post(()->bar.setProgress(100));
+        }catch(Exception e){
+            update("Converter error",shortError(e));
         }finally{
             running=false;
             main.post(()->{

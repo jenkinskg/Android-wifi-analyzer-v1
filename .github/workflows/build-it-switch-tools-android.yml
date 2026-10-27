@@ -1,0 +1,89 @@
+name: Build IT Switch Tools Android v6.0.3 APK
+
+on:
+  push:
+    branches:
+      - it-switch-tools-android-v6-0-3
+    paths:
+      - '.github/workflows/build-it-switch-tools-android.yml'
+      - 'it-switch-tools-android/source.tar.xz.b64'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out separate Android port branch
+        uses: actions/checkout@v4
+
+      - name: Restore complete Android source
+        shell: bash
+        run: |
+          mkdir -p it-switch-tools-android
+          base64 -d it-switch-tools-android/source.tar.xz.b64 > /tmp/it-switch-source.tar.xz
+          echo "724a402bd1d9bc0578118e29238fe67ad9aac87bf297f7173ff8eb91878beefc  /tmp/it-switch-source.tar.xz" | sha256sum -c -
+          tar -xJf /tmp/it-switch-source.tar.xz -C it-switch-tools-android
+          test -f it-switch-tools-android/app/src/main/java/com/ittools/android/MainActivity.java
+          test -f it-switch-tools-android/app/src/main/java/com/ittools/android/NetworkCore.java
+          test -f it-switch-tools-android/app/src/main/java/com/ittools/android/CiscoClient.java
+
+      - name: Download IEEE manufacturer registries for offline lookup
+        shell: bash
+        run: |
+          mkdir -p it-switch-tools-android/app/src/main/assets
+          curl -fLSs --retry 4 --retry-delay 3 -o /tmp/ieee-ma-l.csv https://standards-oui.ieee.org/oui/oui.csv
+          curl -fLSs --retry 4 --retry-delay 3 -o /tmp/ieee-ma-m.csv https://standards-oui.ieee.org/oui28/mam.csv
+          curl -fLSs --retry 4 --retry-delay 3 -o /tmp/ieee-ma-s.csv https://standards-oui.ieee.org/oui36/oui36.csv
+          python3 - <<'PY'
+          import csv
+          from pathlib import Path
+          output = Path('it-switch-tools-android/app/src/main/assets/ieee_prefixes.csv')
+          total = 0
+          with output.open('w', newline='', encoding='utf-8') as dst:
+              writer = csv.writer(dst)
+              writer.writerow(['Registry','Assignment','Organization Name'])
+              for kind, name in [('MA-L','ma-l'),('MA-M','ma-m'),('MA-S','ma-s')]:
+                  with open(f'/tmp/ieee-{name}.csv', encoding='utf-8-sig', newline='') as src:
+                      for row in csv.DictReader(src):
+                          prefix = row.get('Assignment','').strip().upper().replace('-', '')
+                          vendor = row.get('Organization Name','').strip()
+                          if len(prefix) in (6, 7, 9) and vendor:
+                              writer.writerow([kind, prefix, vendor])
+                              total += 1
+          print(f'Bundled {total} IEEE MAC prefix records')
+          if total < 30000:
+              raise SystemExit('Manufacturer registry looks incomplete; refusing to build')
+          PY
+
+      - name: Install JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android command-line SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Compile installable debug APK
+        working-directory: it-switch-tools-android
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: IT-Switch-Tools-Android-v6.0.3-APK
+          path: it-switch-tools-android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30

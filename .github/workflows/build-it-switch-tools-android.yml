@@ -30,6 +30,8 @@ jobs:
           test -f it-switch-tools-android/app/src/main/java/com/ittools/android/MainActivity.java
           test -f it-switch-tools-android/app/src/main/java/com/ittools/android/NetworkCore.java
           test -f it-switch-tools-android/app/src/main/java/com/ittools/android/CiscoClient.java
+          # Disambiguate Android's Process type from java.lang.Process.
+          sed -i 's/Process proc=new ProcessBuilder/java.lang.Process proc=new ProcessBuilder/' it-switch-tools-android/app/src/main/java/com/ittools/android/MainActivity.java
 
       - name: Download IEEE manufacturer registries for offline lookup
         shell: bash

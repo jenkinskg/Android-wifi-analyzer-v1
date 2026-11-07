@@ -1,0 +1,42 @@
+name: Build WiFi Analyzer v3.2 APK
+on:
+  push:
+    branches: [wifi-analyzer-v3-2-ip-display]
+    paths:
+      - '.github/workflows/build-wifi-v3-2.yml'
+      - 'wifi-v3.2/**'
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download original WiFi Analyzer v3.1 source
+        run: |
+          curl --fail --location --retry 3 -o /tmp/wifi-v31.zip "https://raw.githubusercontent.com/jenkinskg/Android-wifi-analyzer-v1/main/WiFiAnalyzerStandalone-v3.1-AndroidStudio.zip"
+          mkdir -p /tmp/wifi-project
+          unzip -q /tmp/wifi-v31.zip -d /tmp/wifi-project
+          find /tmp/wifi-project -name settings.gradle
+      - name: Apply v3.2 network information changes
+        run: python3 wifi-v3.2/update_source.py /tmp/wifi-project
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Build APK
+        run: |
+          PROJECT="$(dirname "$(find /tmp/wifi-project -name settings.gradle | head -1)")"
+          cd "$PROJECT"
+          gradle --no-daemon assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/WiFiAnalyzer-v3.2-debug.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WiFiAnalyzer-v3.2-APK
+          path: WiFiAnalyzer-v3.2-debug.apk
+          if-no-files-found: error

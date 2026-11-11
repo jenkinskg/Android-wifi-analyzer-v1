@@ -19,6 +19,7 @@ import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.location.LocationManager;
 import android.net.wifi.ScanResult;
+import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -110,10 +111,54 @@ public class MainActivity extends Activity {
     private String moveMarkerKey = null;
     private Button autoScanButton, sensitivityButton;
     private long lastTouchCaptured = 0L;
+    // Stop & Go: keep radio connection intact, sample connected RSSI twice per second.
+    private boolean stopGoEnabled = true;
+    private int stopGoSeconds = 5;
+    private boolean stopGoActive = false;
+    private float stopGoX,stopGoY;
+    private long stopGoStartElapsed;
+    private boolean stopGoFreshScan = false;
+    private long stopGoFreshAt = 0L;
+    private String stopGoScanNote = "";
+    private final ArrayList<Reading> stopGoFreshReadings = new ArrayList<>();
+    private final LinkedHashMap<String,StopGoSignal> stopGoConnected = new LinkedHashMap<>();
+    private int stopGoRoams = 0;
+    private String stopGoLastBssid = "";
+    private Button stopGoModeButton, stopGoDurationButton, stopGoCancelButton;
+    private static final class StopGoSignal {
+        String ssid,bssid;int mhz,linkMbps;
+        int count=0,sum=0,min=0,max=0;
+        StopGoSignal(String name,String mac,int frequency,int speed){
+            ssid=name;bssid=mac;mhz=frequency;linkMbps=speed;
+        }
+        void add(int rssi,int frequency,int speed) {
+            if(count==0){min=rssi;max=rssi;}
+            min=Math.min(min,rssi);max=Math.max(max,rssi);
+            sum+=rssi;count++;mhz=frequency;linkMbps=speed;
+        }
+        int avg(){return count==0?-127:Math.round((float)sum/count);}
+    }
+    private final Runnable stopGoTick = new Runnable() {
+        @Override public void run() {
+            if(!stopGoActive||isFinishing()||isDestroyed())return;
+            sampleConnectedWifi();
+            long duration=android.os.SystemClock.elapsedRealtime()-stopGoStartElapsed;
+            long max=stopGoSeconds*1000L;
+            int left=(int)Math.max(0,Math.ceil((max-duration)/1000.0));
+            int polls=0;for(StopGoSignal item:stopGoConnected.values())polls+=item.count;
+            String report=stopGoFreshScan?"fresh full scan captured":stopGoScanNote;
+            status.setText("STOP & GO  •  Stay still "+left+"s  •  "+polls+" live RSSI samples"+
+                "\n"+report+"  •  "+stopGoConnected.size()+" connected BSSID(s)");
+            if(map!=null)map.invalidate();
+            if(duration>=max)finishStopGo();
+            else scanHandler.postDelayed(this,500L);
+        }
+    };
 
     private final Runnable scanLoop = new Runnable() {
         @Override public void run() {
             if (!autoScan || isFinishing()) return;
+            if(stopGoActive){scanHandler.postDelayed(this,45000L);return;}
             if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED
                     && locationEnabled() && wifi!=null && wifi.isWifiEnabled()) scanWifi();
             scanHandler.postDelayed(this,45000L);
@@ -144,6 +189,11 @@ public class MainActivity extends Activity {
         long timestamp,scanAt;
         boolean fresh=false;
         String selectedBssid="";
+        String mode="TAP", connectedBssid="", connectedSsid="";
+        boolean connectedOnly=false;
+        int dwellSeconds=0, connectedSamples=0, connectedAvg=-127;
+        int connectedMin=-127, connectedMax=-127, connectedFreq=0;
+        int connectedLinkMbps=-1, connectedRoams=0;
         ArrayList<Reading> readings = new ArrayList<>();
         Sample(float a,float b){ x=a;y=b;timestamp=System.currentTimeMillis(); }
         Reading strongest() {
@@ -166,6 +216,14 @@ public class MainActivity extends Activity {
             boolean fresh=intent.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED,false);
             if(fresh){lastCompletedScan=System.currentTimeMillis();freshScanCounter++;}
             loadWifiResults(fresh?"FRESH scan #"+freshScanCounter:"CACHED / scan not updated");
+            if(stopGoActive){
+                if(fresh){
+                    stopGoFreshScan=true;stopGoFreshAt=lastCompletedScan;
+                    stopGoFreshReadings.clear();stopGoFreshReadings.addAll(current);
+                    stopGoScanNote="Fresh Wi-Fi scan captured";
+                }else stopGoScanNote="Android scan not updated; sampling connected signal";
+                return;
+            }
             if(pendingSurveyCapture&&fresh){
                 scanHandler.removeCallbacks(scanCaptureTimeout);
                 boolean had=pendingSurveyCapture;
@@ -205,7 +263,7 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.WHITE);
         setContentView(root);
-        TextView title = text("Sidekick Survey  |  v0.8 AP Inventory Clear",20);
+        TextView title = text("Sidekick Survey  |  v0.9 Stop & Go",20);
         title.setTextColor(Color.rgb(16,60,100));
         root.addView(title);
         root.addView(button("Open Wi-Fi Analyzer  •  APs  |  Channels  |  Signal  |  Health",
@@ -231,6 +289,18 @@ public class MainActivity extends Activity {
             if(map!=null)map.invalidate();
         });
         root.addView(pointLabelButton,new LinearLayout.LayoutParams(-1,dp(40)));
+        stopGoModeButton=button("Stop & Go: ON",v->{
+            if(stopGoActive){Toast.makeText(this,"Finish or cancel the current stop first.",Toast.LENGTH_SHORT).show();return;}
+            stopGoEnabled=!stopGoEnabled;
+            stopGoModeButton.setText(stopGoEnabled?"Stop & Go: ON":"Stop & Go: OFF");
+            status.setText(stopGoEnabled?"Tap a map position, stay still, then the app saves a point.":
+                "Quick tap mode: save after a new Wi-Fi scan.");
+            persist();
+        });
+        stopGoDurationButton=button("Dwell: 5 sec",v->chooseDwellDuration());
+        stopGoCancelButton=button("Cancel Stop",v->cancelStopGo("Stop & Go canceled; point not saved."));
+        addButtons(root,stopGoModeButton,stopGoDurationButton,stopGoCancelButton);
+        stopGoCancelButton.setEnabled(false);
         LinearLayout selectionRow = new LinearLayout(this);
         selectionRow.setOrientation(LinearLayout.HORIZONTAL);
         selectionRow.addView(text("Coverage target:",13));
@@ -280,22 +350,140 @@ public class MainActivity extends Activity {
         scanHandler.removeCallbacks(scanLoop);
         scanHandler.removeCallbacks(scanCaptureTimeout);
         pendingSurveyCapture=false;
+        cancelStopGo(null);
         super.onPause();
     }
     @Override public void onDestroy() {
         scanHandler.removeCallbacks(scanLoop);
         scanHandler.removeCallbacks(scanCaptureTimeout);
+        cancelStopGo(null);
         if(map!=null)map.release();
         saveExecutor.shutdown();
         if (registered) unregisterReceiver(scanReceiver);
         super.onDestroy();
+    }
+    private void chooseDwellDuration(){
+        if(stopGoActive){Toast.makeText(this,"Cancel the current stop to change dwell time.",Toast.LENGTH_SHORT).show();return;}
+        final int[] values={3,5,8,10};
+        final String[] labels={"3 seconds","5 seconds (recommended)","8 seconds","10 seconds"};
+        int sel=1;for(int i=0;i<values.length;i++)if(values[i]==stopGoSeconds)sel=i;
+        new AlertDialog.Builder(this).setTitle("Stop & Go dwell duration")
+            .setSingleChoiceItems(labels,sel,(dialog,which)->{
+                stopGoSeconds=values[which];
+                stopGoDurationButton.setText("Dwell: "+stopGoSeconds+" sec");
+                persist();dialog.dismiss();
+            }).setNegativeButton("Cancel",null).show();
+    }
+    private void cancelStopGo(String message){
+        scanHandler.removeCallbacks(stopGoTick);
+        if(!stopGoActive)return;
+        stopGoActive=false;
+        stopGoConnected.clear();stopGoFreshReadings.clear();
+        if(stopGoCancelButton!=null)stopGoCancelButton.setEnabled(false);
+        if(map!=null)map.invalidate();
+        if(message!=null&&status!=null)status.setText(message);
+    }
+    private void sampleConnectedWifi(){
+        if(wifi==null ||checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED)return;
+        try{
+            WifiInfo connection=wifi.getConnectionInfo();
+            if(connection==null)return;
+            String bssid=InventoryStore.normalizeMac(connection.getBSSID());
+            if(bssid.isEmpty())return;
+            int dbm=connection.getRssi();
+            if(dbm>0 || dbm<-110)return;
+            String ssid=connection.getSSID();
+            if(ssid==null)ssid="";
+            if(ssid.length()>=2&&ssid.startsWith("\"")&&ssid.endsWith("\""))
+                ssid=ssid.substring(1,ssid.length()-1);
+            if(ssid.equalsIgnoreCase("<unknown ssid>"))ssid="";
+            if(!stopGoLastBssid.isEmpty()&&!stopGoLastBssid.equals(bssid))stopGoRoams++;
+            stopGoLastBssid=bssid;
+            StopGoSignal signal=stopGoConnected.get(bssid);
+            if(signal==null){
+                signal=new StopGoSignal(ssid,bssid,connection.getFrequency(),connection.getLinkSpeed());
+                stopGoConnected.put(bssid,signal);
+            }
+            signal.add(dbm,connection.getFrequency(),connection.getLinkSpeed());
+        }catch(SecurityException ignored){}
+    }
+    private void beginStopGo(float x,float y) {
+        if(stopGoActive)return;
+        if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED
+            ||!locationEnabled()||wifi==null||!wifi.isWifiEnabled()){
+            scanWifi();
+            Toast.makeText(this,"Enable Wi-Fi and precise location, then tap again.",Toast.LENGTH_LONG).show();
+            return;
+        }
+        stopGoActive=true;stopGoX=x;stopGoY=y;
+        stopGoStartElapsed=android.os.SystemClock.elapsedRealtime();
+        stopGoFreshScan=false;stopGoFreshAt=0L;
+        stopGoFreshReadings.clear();stopGoConnected.clear();
+        stopGoRoams=0;stopGoLastBssid="";
+        if(stopGoCancelButton!=null)stopGoCancelButton.setEnabled(true);
+        // Avoid clashing with the periodic scanner; a stop requests at most one new scan.
+        scanHandler.removeCallbacks(scanLoop);
+        stopGoScanNote="Requesting one Wi-Fi scan";
+        try{
+            if(!wifi.startScan())stopGoScanNote="Wi-Fi scan throttled; collecting live connected RSSI";
+        }catch(SecurityException e){stopGoScanNote="Scan denied; collecting live connected RSSI";}
+        stopGoTick.run();
+    }
+    private void finishStopGo(){
+        if(!stopGoActive)return;
+        scanHandler.removeCallbacks(stopGoTick);
+        stopGoActive=false;
+        if(stopGoCancelButton!=null)stopGoCancelButton.setEnabled(false);
+        if(autoScan)scanHandler.postDelayed(scanLoop,45000L);
+        // Choose the most frequently observed connected BSSID so averaged RSSI
+        // belongs to one radio, even if the tablet roamed during the stop.
+        StopGoSignal connected=null;
+        for(StopGoSignal value:stopGoConnected.values())
+            if(connected==null || value.count>connected.count)connected=value;
+        final boolean fresh=stopGoFreshScan&&!stopGoFreshReadings.isEmpty();
+        if(!fresh && connected==null){
+            stopGoFreshReadings.clear();stopGoConnected.clear();
+            new AlertDialog.Builder(this).setTitle("No Wi-Fi readings collected")
+                .setMessage("Android returned no fresh Wi-Fi scan and the tablet reported no connected AP. Nothing was saved.")
+                .setPositiveButton("Retry",(d,w)->beginStopGo(stopGoX,stopGoY))
+                .setNegativeButton("Close",null).show();
+            if(map!=null)map.invalidate();
+            return;
+        }
+        Sample point=new Sample(stopGoX,stopGoY);
+        point.mode="STOP_GO";point.dwellSeconds=stopGoSeconds;
+        point.fresh=fresh;point.scanAt=fresh?stopGoFreshAt:0L;
+        point.connectedRoams=stopGoRoams;
+        if(fresh)point.readings.addAll(stopGoFreshReadings);
+        if(connected!=null){
+            point.connectedBssid=connected.bssid;point.connectedSsid=connected.ssid;
+            point.connectedSamples=connected.count;point.connectedAvg=connected.avg();
+            point.connectedMin=connected.min;point.connectedMax=connected.max;
+            point.connectedFreq=connected.mhz;point.connectedLinkMbps=connected.linkMbps;
+        }
+        if(!fresh&&connected!=null){
+            // Live client RSSI is not a full AP scan. Record only the connected radio.
+            point.connectedOnly=true;
+            point.readings.add(new Reading(connected.ssid,connected.bssid,connected.avg(),connected.mhz));
+        }
+        Reading strongest=point.strongest();
+        point.selectedBssid=strongest==null?"":strongest.bssid;
+        samples.add(point);
+        int pins=fresh?placeNearbyAps(point):0;
+        stopGoFreshReadings.clear();stopGoConnected.clear();
+        persist();updateSelectors();
+        String origin=fresh?"FRESH Wi-Fi scan + live connected RSSI":"CONNECTED-ONLY (full scan throttled/unavailable)";
+        status.setText("Stop & Go point "+samples.size()+" saved • "+stopGoSeconds+" seconds"+
+            "\n"+origin+" • "+(strongest==null?"No AP":strongest.bssid+" "+strongest.dbm+" dBm")+
+            "\n"+point.connectedSamples+" live RSSI polls • "+pins+" new estimated AP pins.");
+        if(map!=null)map.invalidate();
     }
     private void toggleAutoScan() {
         autoScan=!autoScan;
         autoScanButton.setText(autoScan?"Auto Scan: ON":"Auto Scan: OFF");
         scanHandler.removeCallbacks(scanLoop);
         if(autoScan) {
-            scanWifi();
+            if(!stopGoActive)scanWifi();
             scanHandler.postDelayed(scanLoop,45000L);
         } else status.setText("Automatic Wi-Fi scan attempts stopped.");
     }
@@ -493,8 +681,16 @@ public class MainActivity extends Activity {
             }
             return;
         }
+        if(stopGoActive){
+            Toast.makeText(this,"Stay still: the current Stop & Go is collecting readings.",Toast.LENGTH_SHORT).show();
+            return;
+        }
         if(pendingSurveyCapture){
             Toast.makeText(this,"Scan in progress. One survey point at a time.",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if(stopGoEnabled){
+            beginStopGo(x,y);
             return;
         }
         if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED
@@ -648,9 +844,20 @@ public class MainActivity extends Activity {
         String stamp=new SimpleDateFormat("HH:mm:ss",Locale.US).format(new Date(s.timestamp));
         Reading ap=s.displayedAp();
         String detail=ap==null?"No AP":ap.ssid+"\n"+ap.bssid+"  "+ap.dbm+" dBm";
+        String dwell="";
+        if("STOP_GO".equals(s.mode)){
+            dwell="\nStop & Go: "+s.dwellSeconds+"s • "+s.connectedSamples+" live RSSI polls"+
+                "\nConnected BSSID: "+s.connectedBssid+
+                "\nConnected RSSI: avg "+s.connectedAvg+" dBm, min "+s.connectedMin+
+                ", max "+s.connectedMax+" dBm"+
+                "\nFrequency: "+s.connectedFreq+" MHz • Link "+s.connectedLinkMbps+" Mbps"+
+                "\nBSSID changes during dwell: "+s.connectedRoams+
+                (s.connectedOnly?"\nCONNECTED ONLY: No fresh full Wi-Fi scan":"");
+        }
         new AlertDialog.Builder(this).setTitle("Survey point "+(index+1))
-            .setMessage("Recorded at "+stamp+"  •  "+(s.fresh?"FRESH":"CACHED/UNKNOWN")+
+            .setMessage("Recorded at "+stamp+"  •  "+(s.fresh?"FRESH":"NO FRESH SCAN")+
                 "\nStrongest/selected AP: "+detail+
+                dwell+
                 "\nSeen: "+s.readings.size()+" BSSIDs. Choose another AP from those seen, or remove this point.")
             .setPositiveButton("Choose AP",(d,w)->choosePointAp(s))
             .setNeutralButton("Remove point",(d,w)->confirmAction("Remove point","Remove this survey point?",()->removeSample(s)))
@@ -823,16 +1030,22 @@ public class MainActivity extends Activity {
     }
     private String csv(String v) { return "\"" + (v==null?"":v).replace("\"","\"\"") + "\""; }
     private String makeCsv() {
-        StringBuilder sb=new StringBuilder("timestamp,x_percent,y_percent,ssid,bssid,frequency_mhz,channel,rssi_dbm,source,point_selected_bssid,point_scan_fresh,point_scan_time\n");
+        StringBuilder sb=new StringBuilder("timestamp,x_percent,y_percent,ssid,bssid,frequency_mhz,channel,rssi_dbm,source,point_selected_bssid,point_scan_fresh,point_scan_time,mode,dwell_seconds,connected_bssid,connected_ssid,connected_avg_dbm,connected_min_dbm,connected_max_dbm,connected_rssi_samples,connected_frequency_mhz,connected_link_speed_mbps,connected_bssid_changes,connected_only\n");
         SimpleDateFormat fmt=new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.US);
         for (Sample s:samples) for (Reading r:s.readings) {
             sb.append(csv(fmt.format(new Date(s.timestamp)))).append(',')
               .append(String.format(Locale.US,"%.2f,%.2f",s.x*100,s.y*100)).append(',')
               .append(csv(r.ssid)).append(',').append(csv(r.bssid)).append(',')
               .append(r.mhz).append(',').append(channel(r.mhz)).append(',')
-              .append(r.dbm).append(',').append(csv(SOURCE)).append(',')
+              .append(r.dbm).append(',').append(csv(s.connectedOnly?"Connected live RSSI":SOURCE)).append(',')
               .append(csv(s.selectedBssid)).append(',').append(s.fresh).append(',')
-              .append(csv(s.scanAt>0?fmt.format(new Date(s.scanAt)):"cached/unknown")).append('\n');
+              .append(csv(s.scanAt>0?fmt.format(new Date(s.scanAt)):"no fresh scan")).append(',')
+              .append(csv(s.mode)).append(',').append(s.dwellSeconds).append(',')
+              .append(csv(s.connectedBssid)).append(',').append(csv(s.connectedSsid)).append(',')
+              .append(s.connectedAvg).append(',').append(s.connectedMin).append(',')
+              .append(s.connectedMax).append(',').append(s.connectedSamples).append(',')
+              .append(s.connectedFreq).append(',').append(s.connectedLinkMbps).append(',')
+              .append(s.connectedRoams).append(',').append(s.connectedOnly).append('\n');
         }
         return sb.toString();
     }
@@ -862,6 +1075,8 @@ public class MainActivity extends Activity {
         }
         final ArrayList<String> hiddenSnapshot=new ArrayList<>(hiddenApKeys);
         final int threshold=nearbyThreshold;
+        final int duration=stopGoSeconds;
+        final boolean selectedMode=stopGoEnabled;
         final int ticket=saveRevision.incrementAndGet();
         saveExecutor.execute(()->{
             if(ticket!=saveRevision.get())return;
@@ -875,6 +1090,13 @@ public class MainActivity extends Activity {
                     entry.put("fresh",sample.fresh);
                     entry.put("scanAt",sample.scanAt);
                     entry.put("selectedBssid",sample.selectedBssid);
+                    entry.put("mode",sample.mode);entry.put("dwellSeconds",sample.dwellSeconds);
+                    entry.put("connectedBssid",sample.connectedBssid);
+                    entry.put("connectedSsid",sample.connectedSsid);
+                    entry.put("connectedAvg",sample.connectedAvg);entry.put("connectedMin",sample.connectedMin);
+                    entry.put("connectedMax",sample.connectedMax);entry.put("connectedSamples",sample.connectedSamples);
+                    entry.put("connectedFreq",sample.connectedFreq);entry.put("connectedLinkMbps",sample.connectedLinkMbps);
+                    entry.put("connectedRoams",sample.connectedRoams);entry.put("connectedOnly",sample.connectedOnly);
                     JSONArray readings=new JSONArray();
                     for(Reading reading:sample.readings) {
                         JSONObject r=new JSONObject();
@@ -885,6 +1107,8 @@ public class MainActivity extends Activity {
                 }
                 root.put("samples",array);
                 root.put("nearbyThreshold",threshold);
+                root.put("stopGoEnabled",selectedMode);
+                root.put("stopGoSeconds",duration);
                 JSONArray pins=new JSONArray();
                 for(ApMarker m:pinSnapshot) {
                     JSONObject p=new JSONObject();
@@ -924,6 +1148,11 @@ public class MainActivity extends Activity {
                 byte[] bytes=java.nio.file.Files.readAllBytes(stored.toPath());
                 JSONObject root=new JSONObject(new String(bytes,java.nio.charset.StandardCharsets.UTF_8));
                 nearbyThreshold=root.optInt("nearbyThreshold",-55);
+                stopGoEnabled=root.optBoolean("stopGoEnabled",true);
+                stopGoSeconds=root.optInt("stopGoSeconds",5);
+                if(stopGoSeconds!=3&&stopGoSeconds!=5&&stopGoSeconds!=8&&stopGoSeconds!=10)stopGoSeconds=5;
+                if(stopGoModeButton!=null)stopGoModeButton.setText(stopGoEnabled?"Stop & Go: ON":"Stop & Go: OFF");
+                if(stopGoDurationButton!=null)stopGoDurationButton.setText("Dwell: "+stopGoSeconds+" sec");
                 if(sensitivityButton!=null)sensitivityButton.setText("Near: "+nearbyThreshold+" dBm");
                 JSONArray removed=root.optJSONArray("hiddenApKeys");
                 if(removed!=null)for(int i=0;i<removed.length();i++)hiddenApKeys.add(removed.optString(i));
@@ -947,6 +1176,18 @@ public class MainActivity extends Activity {
                     s.fresh=a.optBoolean("fresh",false);
                     s.scanAt=a.optLong("scanAt",0L);
                     s.selectedBssid=a.optString("selectedBssid","");
+                    s.mode=a.optString("mode","TAP");
+                    s.dwellSeconds=a.optInt("dwellSeconds",0);
+                    s.connectedBssid=a.optString("connectedBssid","");
+                    s.connectedSsid=a.optString("connectedSsid","");
+                    s.connectedAvg=a.optInt("connectedAvg",-127);
+                    s.connectedMin=a.optInt("connectedMin",-127);
+                    s.connectedMax=a.optInt("connectedMax",-127);
+                    s.connectedSamples=a.optInt("connectedSamples",0);
+                    s.connectedFreq=a.optInt("connectedFreq",0);
+                    s.connectedLinkMbps=a.optInt("connectedLinkMbps",-1);
+                    s.connectedRoams=a.optInt("connectedRoams",0);
+                    s.connectedOnly=a.optBoolean("connectedOnly",false);
                     JSONArray readings=a.optJSONArray("readings");
                     if (readings!=null) for (int j=0;j<readings.length();j++) {
                         JSONObject r=readings.getJSONObject(j);
@@ -1031,10 +1272,12 @@ public class MainActivity extends Activity {
                             if(label.length()>13)label=label.substring(0,12)+"…";
                             float fs=Math.max(dp(9),Math.min(dp(12),area.width()/160f));
                             p.setTextAlign(Paint.Align.LEFT);p.setTextSize(fs);
-                            String line1=label+"  "+ap.dbm+" dBm"+(s.fresh?"":" [cached]");
+                            String line1=label+"  "+ap.dbm+" dBm"+
+                                (s.connectedOnly?" [connected]":s.fresh?"":" [cached]");
                             String line2=ap.bssid.toUpperCase(Locale.US);
-            InventoryStore.Entry identified=linkedAp(ap.bssid);
-            if(identified!=null)line1=identified.displayName()+"  "+ap.dbm+" dBm";
+                            InventoryStore.Entry identified=linkedAp(ap.bssid);
+                            if(identified!=null)line1=identified.displayName()+"  "+ap.dbm+" dBm"+
+                                (s.connectedOnly?" [connected]":"");
                             float boxWidth=Math.max(p.measureText(line1),p.measureText(line2))+dp(8);
                             float bx=x+pointRadius+dp(2),by=y+pointRadius+dp(2);
                             p.setColor(Color.argb(236,248,250,255));
@@ -1080,6 +1323,21 @@ public class MainActivity extends Activity {
                     } else c.drawText(name,tx,ty,p);
                     p.setTextSize(font*0.87f);
                     c.drawText(imported==null?mac:(imported.ip+"  "+mac),tx,ty+font,p);
+                }
+                // Progress ring marks the selected Stop & Go dwell position.
+                if(stopGoActive){
+                    float x=area.left+area.width()*stopGoX,y=area.top+area.height()*stopGoY;
+                    long elapsed=android.os.SystemClock.elapsedRealtime()-stopGoStartElapsed;
+                    float fraction=Math.max(0f,Math.min(1f,elapsed/(stopGoSeconds*1000f)));
+                    p.setStyle(Paint.Style.FILL);p.setColor(Color.argb(210,255,255,255));
+                    c.drawCircle(x,y,dp(24),p);
+                    p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(5));
+                    p.setColor(Color.rgb(27,110,189));
+                    c.drawArc(new RectF(x-dp(23),y-dp(23),x+dp(23),y+dp(23)),-90,360*fraction,false,p);
+                    p.setStyle(Paint.Style.FILL);p.setTextAlign(Paint.Align.CENTER);
+                    p.setTextSize(dp(13));p.setColor(Color.rgb(20,65,106));
+                    int secondsLeft=(int)Math.max(0,Math.ceil((stopGoSeconds*1000f-elapsed)/1000f));
+                    c.drawText(secondsLeft+"s",x,y+dp(5),p);
                 }
             }
         }

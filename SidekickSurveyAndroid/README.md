@@ -1,4 +1,4 @@
-# Sidekick Survey Android – JPG heatmaps (v0.8)
+# Sidekick Survey Android – JPG heatmaps (v0.9)
 
 A working **Android Wi-Fi survey prototype** that records the phone's Wi-Fi scan results at manually selected positions on an imported JPG/PNG floor plan. This is a separate project from the older ZIP-based Wi-Fi Analyzer in the repository.
 
@@ -128,3 +128,15 @@ JPG from v0.1 and import it in v0.3 if needed. Keep v0.1 installed until migrate
 - Import TXT/CSV again to reload a list. Import **Replace** is also available.
 - v0.8 has its own package ID and installs alongside v0.7. The earlier install's imported list is retained separately; file data is not migrated.
 - Successful GitHub Action builds publish the v0.8 APK to `apks/Sidekick-Survey-Android-v0.8.apk`.
+
+## v0.9 Stop & Go Wi-Fi Survey
+- On the survey home screen use **Stop & Go: ON** (default), select **Dwell: 3/5/8/10 sec** (default 5) and tap a NEW position on the imported JPG floor plan.
+- A blue countdown ring and live status show the dwell. Remain still while sampling the **actually connected tablet BSSID and RSSI every 500ms**. Uses WifiInfo, not repeated disconnect/reconnect.
+- Attempts **one Android full Wi-Fi scan per stop**; when a fresh scan broadcast is received during the dwell, records the strongest SSID, BSSID, RSSI, frequency and channel of every visible AP. If scan is throttled, it stores the connected AP's **live sampled average/min/max RSSI only**, explicitly marked CONNECTED ONLY; does not mislabel an old cached scan as fresh.
+- One completed stop creates **one** map point; AP proximity pins only update from fresh full scans. No points are created from auto-scan/connection polling alone.
+- Tap survey point for average, minimum, maximum RSSI of the most frequently observed connected BSSID, polling count, frequency, link speed and connection BSSID changes during the stop. Survey CSV gains dwell columns and scan origin details.
+- **Cancel Stop** discards unfinished measurement. Stop & Go OFF preserves previous quick-tap and fresh-scan/cached confirmation workflow.
+- Stop & Go settings are persisted with survey. Heatmap stays background-generated and never recalculates per 500ms tick.
+- **Android Wi-Fi scan throttling** means a 5-second wait does not guarantee a new scan or repeated scans of all nearby APs; connected signal readings are the high-frequency component.
+- No captive roaming, no forced Wi-Fi disconnect and reconnect, and no proprietary Ekahau Sidekick measurements.
+- Installed separately as `com.jenkinskg.sidekicksurvey.v9`. Previous app data remains in v0.8, not automatically migrated.

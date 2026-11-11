@@ -1,4 +1,4 @@
-# Sidekick Survey Android – JPG heatmaps (v0.2)
+# Sidekick Survey Android – JPG heatmaps (v0.3)
 
 A working **Android Wi-Fi survey prototype** that records the phone's Wi-Fi scan results at manually selected positions on an imported JPG/PNG floor plan. This is a separate project from the older ZIP-based Wi-Fi Analyzer in the repository.
 
@@ -31,7 +31,7 @@ A working **Android Wi-Fi survey prototype** that records the phone's Wi-Fi scan
 - User-selected map points are manually placed; this app does not infer indoor positioning.
 - Imported floor plans are downsampled to ~2400 px maximum side to limit memory use. Exported JPG contains the overlaid map at this resolution.
 
-## v0.2 Analyzer screen
+## v0.3 Analyzer screen
 From the JPG survey screen tap **Open Wi-Fi Analyzer**.
 - **Access points**: sortable strongest-first list with detailed BSSID, SSID, channel,
   2.4/5/6-GHz band, RSSI, Wi-Fi generation, security capabilities and 20–320 MHz advertised width.
@@ -49,9 +49,34 @@ still an Android-phone-radio analyzer, *not* direct Sidekick 2 RF access. The de
 spectrum analyzer, calibration, noise floor, packet capture, Wi-Fi 6 GHz channel coverage,
 and interference readings require a compatible Sidekick SDK/interface and external hardware.
 
-## Install v0.2 without removing v0.1
-GitHub Actions debug builds use different signing certificates. v0.2 uses a distinct
+## Install v0.3 without removing v0.1
+GitHub Actions debug builds use different signing certificates. v0.3 uses a distinct
 Android application ID (`com.jenkinskg.sidekicksurvey.v2`) so it installs **beside**
 v0.1 rather than failing as an update or deleting v0.1's local survey data.
-Saved maps and survey points in v0.1 do not automatically move to v0.2. Export the
-JPG from v0.1 and import it in v0.2 if needed. Keep v0.1 installed until migrated.
+Saved maps and survey points in v0.1 do not automatically move to v0.3. Export the
+JPG from v0.1 and import it in v0.3 if needed. Keep v0.1 installed until migrated.
+
+## v0.3: walking AP mapping
+- Import a JPG floor plan, turn on **Auto Scan** (optional; 45-second attempts),
+  and tap your position as you walk.
+- Each tap stores a reading; visible APs at or above the adjustable RSSI
+  threshold (-45 / -55 / -65 / -75 dBm) are automatically assigned an **estimated**
+  location at your tap, with a persistent unique pin for each BSSID/MAC. Up to 4
+  previously unseen AP pins are created per tap; all existing pins can be updated.
+- If a stronger RSSI reading is later recorded, an *unfixed* marker moves
+  toward the strongest recorded measurement location. This is **not**
+  triangulation or a verified physical AP location.
+- AP markers are orange for estimated, blue for manually moved,
+  green for explicitly verified. Pins show AP name/SSID and BSSID.
+- Touch a pin or open **AP Inventory** to edit AP name, building/room/closet,
+  switch/port, notes, and the physically verified flag.
+- **Move pin** in the editor allows tapping the correct floor-plan position.
+  Manually moved positions are protected from automated repositioning.
+- Save annotated JPG, original survey CSV, and new AP inventory CSV
+  with editable fields, RSSI peak and map coordinates.
+- Clear now explicitly warns that AP inventory and notes are also removed.
+- v0.3 uses its own Android package ID and installs alongside v0.1/v0.2,
+  preserving older local data in those apps (not auto-importing their surveys).
+- Scan results can be cached or throttled on Android. Do not mistake the
+  AP's position at the strongest recorded walking measurement for its true
+  physical mounting location. Use visual confirmation to verify it.

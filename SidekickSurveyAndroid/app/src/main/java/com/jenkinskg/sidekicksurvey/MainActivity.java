@@ -28,6 +28,9 @@ import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.EditText;
+import android.widget.InputType;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
@@ -47,6 +50,8 @@ import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 
 public class MainActivity extends Activity {
@@ -54,6 +59,7 @@ public class MainActivity extends Activity {
     private static final int SAVE_JPG = 101;
     private static final int SAVE_CSV = 102;
     private static final int PERMISSION_WIFI = 103;
+    private static final int SAVE_AP_CSV = 104;
     private static final String SOURCE = "Android phone Wi-Fi";
 
     private WifiManager wifi;
@@ -67,11 +73,40 @@ public class MainActivity extends Activity {
     private String target = "BEST";
     private boolean registered;
     private long lastCompletedScan = 0L;
+    // A marker is an RSSI-peak survey estimate, not a triangulated AP position.
+    private final LinkedHashMap<String,ApMarker> apMarkers = new LinkedHashMap<>();
+    private final android.os.Handler scanHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private boolean autoScan = false;
+    private int nearbyThreshold = -55;
+    private String moveMarkerKey = null;
+    private Button autoScanButton, sensitivityButton;
+    private final Runnable scanLoop = new Runnable() {
+        @Override public void run() {
+            if (!autoScan || isFinishing()) return;
+            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED
+                    && locationEnabled() && wifi!=null && wifi.isWifiEnabled()) scanWifi();
+            scanHandler.postDelayed(this,45000L);
+        }
+    };
 
     static class Reading {
         String ssid, bssid;
         int dbm, mhz;
         Reading(String s, String b, int r, int f) { ssid=s; bssid=b; dbm=r; mhz=f; }
+    }
+    static class ApMarker {
+        String bssid,ssid,apName="",room="",switchPort="",notes="";
+        float x,y;
+        int bestDbm=-127,frequency;
+        boolean pinned=false,verified=false;
+        ApMarker(Reading r,float px,float py) {
+            bssid=r.bssid.toLowerCase(Locale.US);
+            ssid=r.ssid; x=px; y=py; bestDbm=r.dbm; frequency=r.mhz;
+        }
+        String name() {
+            if(apName!=null&&!apName.trim().isEmpty())return apName.trim();
+            return ssid==null||ssid.isEmpty()?"Unknown AP":ssid;
+        }
     }
     static class Sample {
         float x,y;
@@ -115,18 +150,22 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.WHITE);
         setContentView(root);
-        TextView title = text("Sidekick Survey  |  v0.2 JPG Maps",20);
+        TextView title = text("Sidekick Survey  |  v0.3 AP Mapping",20);
         title.setTextColor(Color.rgb(16,60,100));
         root.addView(title);
         root.addView(button("Open Wi-Fi Analyzer  •  APs  |  Channels  |  Signal  |  Health",
             v->startActivity(new Intent(this,AnalyzerActivity.class))));
         usbStatus = text("",12); root.addView(usbStatus);
-        status = text("Import a floor plan, scan Wi-Fi, then tap positions to record.",13);
+        status = text("Walk, scan, tap your location: close APs get estimated pins.",13);
         root.addView(status);
         addButtons(root,
             button("Import JPG", v-> pickMap()),
             button("Scan Wi-Fi", v-> scanWifi()),
             button("USB status", v-> updateUsb()));
+        autoScanButton = button("Auto Scan: OFF",v->toggleAutoScan());
+        sensitivityButton = button("Near: -55 dBm",v->chooseSensitivity());
+        addButtons(root,autoScanButton,sensitivityButton,
+            button("AP Inventory",v->showApInventory()));
         LinearLayout selectionRow = new LinearLayout(this);
         selectionRow.setOrientation(LinearLayout.HORIZONTAL);
         selectionRow.addView(text("Coverage target:",13));
@@ -137,8 +176,9 @@ public class MainActivity extends Activity {
         root.addView(map,new LinearLayout.LayoutParams(-1,0,1));
         addButtons(root,
             button("Save JPG", v-> beginSave(SAVE_JPG, "image/jpeg", "survey-map.jpg")),
-            button("Save CSV", v-> beginSave(SAVE_CSV, "text/csv", "survey-data.csv")),
-            button("Clear points", v-> confirmClear()));
+            button("Survey CSV", v-> beginSave(SAVE_CSV, "text/csv", "survey-data.csv")),
+            button("AP CSV", v-> beginSave(SAVE_AP_CSV, "text/csv", "access-points.csv")),
+            button("Clear", v-> confirmClear()));
         resultsText = text("No scan results yet.",12);
         ScrollView scroll = new ScrollView(this);
         scroll.addView(resultsText);
@@ -162,10 +202,44 @@ public class MainActivity extends Activity {
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED)
             loadWifiResults("Tap Scan Wi-Fi for fresh readings");
     }
-    @Override public void onResume() { super.onResume(); if (usbStatus!=null) updateUsb(); }
+    @Override public void onResume() {
+        super.onResume();
+        if(usbStatus!=null)updateUsb();
+        scanHandler.removeCallbacks(scanLoop);
+        if(autoScan)scanHandler.postDelayed(scanLoop,45000L);
+    }
+    @Override public void onPause() {
+        scanHandler.removeCallbacks(scanLoop);
+        super.onPause();
+    }
     @Override public void onDestroy() {
+        scanHandler.removeCallbacks(scanLoop);
         if (registered) unregisterReceiver(scanReceiver);
         super.onDestroy();
+    }
+    private void toggleAutoScan() {
+        autoScan=!autoScan;
+        autoScanButton.setText(autoScan?"Auto Scan: ON":"Auto Scan: OFF");
+        scanHandler.removeCallbacks(scanLoop);
+        if(autoScan) {
+            scanWifi();
+            scanHandler.postDelayed(scanLoop,45000L);
+        } else status.setText("Automatic Wi-Fi scan attempts stopped.");
+    }
+    private void chooseSensitivity() {
+        final String[] names={"Very close (-45 dBm)","Close (-55 dBm)","Nearby (-65 dBm)","Broad (-75 dBm)"};
+        final int[] thresholds={-45,-55,-65,-75};
+        int selected=1;
+        for(int i=0;i<thresholds.length;i++)if(thresholds[i]==nearbyThreshold)selected=i;
+        new AlertDialog.Builder(this)
+            .setTitle("Automatic AP pin sensitivity")
+            .setSingleChoiceItems(names,selected,(dialog,which)->{
+                nearbyThreshold=thresholds[which];
+                sensitivityButton.setText("Near: "+nearbyThreshold+" dBm");
+                persist();
+                dialog.dismiss();
+            })
+            .setNegativeButton("Cancel",null).show();
     }
     private void updateUsb() {
         UsbManager m=(UsbManager)getSystemService(Context.USB_SERVICE);
@@ -268,8 +342,8 @@ public class MainActivity extends Activity {
         startActivityForResult(i,PICK_MAP);
     }
     private void beginSave(int kind, String mime, String name) {
-        if (floor==null || samples.isEmpty()) {
-            Toast.makeText(this,"Import a map and record at least one position first.",Toast.LENGTH_LONG).show();
+        if (kind==SAVE_AP_CSV ? apMarkers.isEmpty() : (floor==null || samples.isEmpty())) {
+            Toast.makeText(this,kind==SAVE_AP_CSV?"No AP pins to export.":"Import a map and record survey positions first.",Toast.LENGTH_LONG).show();
             return;
         }
         Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);
@@ -286,7 +360,7 @@ public class MainActivity extends Activity {
                 Bitmap loaded=readScaledMap(data.getData());
                 if (loaded==null) throw new Exception("Invalid image");
                 floor=loaded;
-                samples.clear(); target="BEST";
+                samples.clear(); apMarkers.clear(); moveMarkerKey=null; target="BEST";
                 try (OutputStream out=new FileOutputStream(new File(getFilesDir(),"floorplan.jpg"))) {
                     floor.compress(Bitmap.CompressFormat.JPEG,94,out);
                 }
@@ -301,12 +375,13 @@ public class MainActivity extends Activity {
                 }
                 picture.recycle();
                 status.setText("Annotated floor plan JPG saved.");
-            } else if (request==SAVE_CSV) {
+            } else if (request==SAVE_CSV || request==SAVE_AP_CSV) {
                 try (OutputStream out=getContentResolver().openOutputStream(data.getData())) {
                     if (out==null) throw new Exception("Cannot open destination");
-                    out.write(makeCsv().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    String contents=request==SAVE_CSV ? makeCsv():makeApCsv();
+                    out.write(contents.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 }
-                status.setText("Survey CSV saved with "+samples.size()+" locations.");
+                status.setText(request==SAVE_CSV?"Survey CSV saved.":"AP inventory CSV saved with "+apMarkers.size()+" pins.");
             }
         } catch (Exception e) {
             status.setText("File operation failed: "+e.getMessage());
@@ -330,21 +405,140 @@ public class MainActivity extends Activity {
     }
     private void capture(float x,float y) {
         if (floor==null) { Toast.makeText(this,"Import JPG floor plan first.",Toast.LENGTH_SHORT).show(); return; }
+        if (moveMarkerKey!=null) {
+            ApMarker selected=apMarkers.get(moveMarkerKey);
+            moveMarkerKey=null;
+            if(selected!=null) {
+                selected.x=x;selected.y=y;selected.pinned=true;
+                persist();map.invalidate();
+                status.setText("Moved "+selected.name()+" to manually selected position.");
+            }
+            return;
+        }
         if (current.isEmpty()) { Toast.makeText(this,"Scan Wi-Fi first; no AP readings yet.",Toast.LENGTH_LONG).show(); return; }
-        Sample s=new Sample(x,y);
-        s.readings.addAll(current);
-        samples.add(s);
+        Sample sample=new Sample(x,y);
+        sample.readings.addAll(current);
+        samples.add(sample);
+        int placed=placeNearbyAps(sample);
         persist();
         updateSelectors(); map.regenerate();
-        status.setText("Captured point "+samples.size()+" with "+s.readings.size()+" APs. Tap next location.");
+        String stale=(lastCompletedScan==0 || System.currentTimeMillis()-lastCompletedScan>120000L)
+            ?" Readings may be stale; tap Scan Wi-Fi.":"";
+        status.setText("Point "+samples.size()+" saved; "+placed+" new AP pins, "+apMarkers.size()+" total."+stale);
+    }
+    private int placeNearbyAps(Sample s) {
+        int added=0;
+        // Samples are already sorted strongest-first. Never create an unlimited pile
+        // of AP pins at a single point. Existing estimates can improve at any point.
+        for(Reading r:s.readings) {
+            if(r.bssid==null || r.bssid.trim().isEmpty() || r.dbm<nearbyThreshold)continue;
+            String key=r.bssid.toLowerCase(Locale.US);
+            ApMarker m=apMarkers.get(key);
+            if(m==null) {
+                if(added>=4)continue;
+                m=new ApMarker(r,s.x,s.y);
+                apMarkers.put(key,m);
+                added++;
+            } else {
+                if(r.dbm>m.bestDbm+2 && !m.pinned) {
+                    m.x=s.x;m.y=s.y;
+                }
+                if(r.dbm>m.bestDbm){m.bestDbm=r.dbm;m.frequency=r.mhz;}
+                if((m.ssid==null||m.ssid.isEmpty()) && r.ssid!=null)m.ssid=r.ssid;
+            }
+        }
+        return added;
+    }
+    private void showApInventory() {
+        if(apMarkers.isEmpty()) {
+            new AlertDialog.Builder(this).setTitle("AP Inventory")
+                .setMessage("No AP pins yet. Tap Scan Wi-Fi, then tap your position on the map whenever you're near an AP. Use Near sensitivity to adjust the signal threshold.")
+                .setPositiveButton("OK",null).show();
+            return;
+        }
+        ArrayList<ApMarker> list=new ArrayList<>(apMarkers.values());
+        String[] names=new String[list.size()];
+        for(int i=0;i<list.size();i++){
+            ApMarker m=list.get(i);
+            names[i]=m.name()+" | "+m.bssid+" | "+m.bestDbm+" dBm"+(m.verified?" ✓ verified":"");
+        }
+        new AlertDialog.Builder(this).setTitle("AP Inventory ("+list.size()+")")
+            .setItems(names,(dialog,which)->editApMarker(list.get(which)))
+            .setPositiveButton("Close",null).show();
+    }
+    private EditText field(LinearLayout parent,String label,String value,boolean multi) {
+        TextView t=text(label,12);parent.addView(t);
+        EditText e=new EditText(this);e.setSingleLine(!multi);
+        if(multi){e.setMinLines(2);e.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);}
+        e.setText(value==null?"":value);
+        parent.addView(e);
+        return e;
+    }
+    private void editApMarker(ApMarker m) {
+        LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(16),dp(8),dp(16),dp(8));
+        form.addView(text("SSID: "+m.ssid+"\nBSSID / MAC: "+m.bssid+
+            "\nPeak RSSI: "+m.bestDbm+" dBm ("+m.frequency+" MHz)"+
+            "\nPosition: "+(m.pinned?"Manually positioned":"Estimated from strongest survey reading"),12));
+        EditText name=field(form,"AP name / hostname",m.apName,false);
+        EditText room=field(form,"Building / room / closet",m.room,false);
+        EditText sw=field(form,"Switch / port",m.switchPort,false);
+        EditText note=field(form,"Notes",m.notes,true);
+        CheckBox verified=new CheckBox(this);
+        verified.setText("I physically verified this AP location");
+        verified.setChecked(m.verified);
+        form.addView(verified);
+        ScrollView scroll=new ScrollView(this);scroll.addView(form);
+        AlertDialog dialog=new AlertDialog.Builder(this)
+            .setTitle("Edit AP pin")
+            .setView(scroll)
+            .setPositiveButton("Save",null)
+            .setNeutralButton("Move pin",null)
+            .setNegativeButton("Cancel",null).create();
+        dialog.setOnShowListener(ignored->{
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+                m.apName=name.getText().toString().trim();
+                m.room=room.getText().toString().trim();
+                m.switchPort=sw.getText().toString().trim();
+                m.notes=note.getText().toString().trim();
+                m.verified=verified.isChecked();
+                persist();map.invalidate();
+                dialog.dismiss();
+            });
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v->{
+                m.apName=name.getText().toString().trim();
+                m.room=room.getText().toString().trim();
+                m.switchPort=sw.getText().toString().trim();
+                m.notes=note.getText().toString().trim();
+                m.verified=verified.isChecked();
+                moveMarkerKey=m.bssid;
+                persist();
+                status.setText("Tap the AP's physical location on the map to move "+m.name()+".");
+                Toast.makeText(this,"Tap new AP position on map",Toast.LENGTH_LONG).show();
+                dialog.dismiss();
+            });
+        });
+        dialog.show();
+    }
+    private ApMarker hitMarker(float px,float py,RectF area,float tolerance) {
+        ApMarker found=null;float closest=tolerance*tolerance;
+        for(ApMarker m:apMarkers.values()){
+            float x=area.left+m.x*area.width();
+            float y=area.top+m.y*area.height();
+            float dx=px-x,dy=py-y;
+            float d=dx*dx+dy*dy;
+            if(d<closest){closest=d;found=m;}
+        }
+        return found;
     }
     private void confirmClear() {
-        if (samples.isEmpty()) return;
-        new AlertDialog.Builder(this).setTitle("Clear survey points?")
-            .setMessage("This will remove all recorded measurements on the current map.")
-            .setPositiveButton("Clear",(d,w)->{
-                samples.clear();persist();updateSelectors();map.regenerate();
-                status.setText("Survey points cleared. Floor plan kept.");
+        if(samples.isEmpty()&&apMarkers.isEmpty())return;
+        new AlertDialog.Builder(this).setTitle("Clear survey and AP pins?")
+            .setMessage("Delete ALL local survey points and AP inventory notes for this map? Export a JPG and AP CSV first if you want to keep them.")
+            .setPositiveButton("Delete all",(d,w)->{
+                samples.clear();apMarkers.clear();moveMarkerKey=null;
+                persist();updateSelectors();map.regenerate();
+                status.setText("Survey points and AP pins cleared. Floor plan kept.");
             })
             .setNegativeButton("Cancel",null).show();
     }
@@ -371,6 +565,19 @@ public class MainActivity extends Activity {
         }
         return sb.toString();
     }
+    private String makeApCsv() {
+        StringBuilder b=new StringBuilder("ap_name,ssid,bssid,best_rssi_dbm,frequency_mhz,x_percent,y_percent,room_closet,switch_port,notes,manually_positioned,physically_verified,source\n");
+        for(ApMarker m:apMarkers.values()){
+            b.append(csv(m.apName)).append(',').append(csv(m.ssid)).append(',')
+            .append(csv(m.bssid)).append(',').append(m.bestDbm).append(',')
+            .append(m.frequency).append(',')
+            .append(String.format(Locale.US,"%.2f,%.2f",100*m.x,100*m.y)).append(',')
+            .append(csv(m.room)).append(',').append(csv(m.switchPort)).append(',')
+            .append(csv(m.notes)).append(',').append(m.pinned).append(',')
+            .append(m.verified).append(',').append(csv(SOURCE)).append('\n');
+        }
+        return b.toString();
+    }
     private void persist() {
         try {
             JSONObject root=new JSONObject();
@@ -387,6 +594,17 @@ public class MainActivity extends Activity {
                 sample.put("readings",readings);array.put(sample);
             }
             root.put("samples",array);
+            root.put("nearbyThreshold",nearbyThreshold);
+            JSONArray pins=new JSONArray();
+            for(ApMarker m:apMarkers.values()){
+                JSONObject p=new JSONObject();
+                p.put("bssid",m.bssid);p.put("ssid",m.ssid);p.put("apName",m.apName);
+                p.put("room",m.room);p.put("switchPort",m.switchPort);p.put("notes",m.notes);
+                p.put("x",m.x);p.put("y",m.y);p.put("bestDbm",m.bestDbm);
+                p.put("frequency",m.frequency);p.put("pinned",m.pinned);
+                p.put("verified",m.verified);pins.put(p);
+            }
+            root.put("apMarkers",pins);
             try (FileOutputStream out=new FileOutputStream(new File(getFilesDir(),"survey.json"))) {
                 out.write(root.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
             }
@@ -400,6 +618,20 @@ public class MainActivity extends Activity {
             if (stored.exists()) {
                 byte[] bytes=java.nio.file.Files.readAllBytes(stored.toPath());
                 JSONObject root=new JSONObject(new String(bytes,java.nio.charset.StandardCharsets.UTF_8));
+                nearbyThreshold=root.optInt("nearbyThreshold",-55);
+                if(sensitivityButton!=null)sensitivityButton.setText("Near: "+nearbyThreshold+" dBm");
+                JSONArray pins=root.optJSONArray("apMarkers");
+                if(pins!=null)for(int j=0;j<pins.length();j++){
+                    JSONObject p=pins.getJSONObject(j);
+                    Reading initial=new Reading(p.optString("ssid"),p.optString("bssid"),
+                        p.optInt("bestDbm",-127),p.optInt("frequency",0));
+                    if(initial.bssid.isEmpty())continue;
+                    ApMarker pin=new ApMarker(initial,(float)p.optDouble("x"),(float)p.optDouble("y"));
+                    pin.apName=p.optString("apName");pin.room=p.optString("room");
+                    pin.switchPort=p.optString("switchPort");pin.notes=p.optString("notes");
+                    pin.pinned=p.optBoolean("pinned");pin.verified=p.optBoolean("verified");
+                    apMarkers.put(pin.bssid,pin);
+                }
                 JSONArray array=root.optJSONArray("samples");
                 if (array!=null) for (int i=0;i<array.length();i++) {
                     JSONObject a=array.getJSONObject(i);
@@ -415,7 +647,7 @@ public class MainActivity extends Activity {
                 }
             }
             map.regenerate();
-            if (floor!=null) status.setText("Restored floor plan with "+samples.size()+" survey positions.");
+            if (floor!=null) status.setText("Restored "+samples.size()+" survey positions and "+apMarkers.size()+" AP pins.");
         } catch (Exception e) { status.setText("Could not restore previous survey: "+e.getMessage()); }
     }
 
@@ -469,15 +701,43 @@ public class MainActivity extends Activity {
             }
             if (showPins) {
                 Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
+                float pointRadius=Math.max(dp(5),Math.min(dp(9),area.width()/175f));
                 for (int i=0;i<samples.size();i++) {
                     Sample s=samples.get(i);
                     float x=area.left+area.width()*s.x,y=area.top+area.height()*s.y;
                     p.setColor(Color.WHITE);p.setStyle(Paint.Style.FILL);
-                    c.drawCircle(x,y,dp(8),p);
-                    p.setColor(Color.BLACK);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(dp(2));
-                    c.drawCircle(x,y,dp(8),p);p.setStyle(Paint.Style.FILL);
-                    p.setColor(Color.BLACK);p.setTextSize(dp(10));p.setTextAlign(Paint.Align.CENTER);
-                    c.drawText(String.valueOf(i+1),x,y+dp(3),p);
+                    c.drawCircle(x,y,pointRadius,p);
+                    p.setColor(Color.BLACK);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(Math.max(1,pointRadius/4));
+                    c.drawCircle(x,y,pointRadius,p);p.setStyle(Paint.Style.FILL);
+                    p.setColor(Color.BLACK);p.setTextSize(Math.max(dp(7),pointRadius));
+                    p.setTextAlign(Paint.Align.CENTER);
+                    c.drawText(String.valueOf(i+1),x,y+pointRadius/3,p);
+                }
+                // AP pins are drawn after sample dots and the heatmap, so they remain visible.
+                float radius=Math.max(dp(10),Math.min(dp(17),area.width()/95f));
+                float font=Math.max(dp(10),Math.min(dp(14),area.width()/105f));
+                for(ApMarker m:apMarkers.values()){
+                    float x=area.left+area.width()*m.x,y=area.top+area.height()*m.y;
+                    p.setStyle(Paint.Style.FILL);
+                    p.setColor(m.verified?Color.rgb(34,153,87):m.pinned?
+                        Color.rgb(52,111,206):Color.rgb(225,120,35));
+                    c.drawCircle(x,y,radius,p);
+                    p.setColor(Color.WHITE);
+                    p.setTextSize(radius*0.85f);p.setTextAlign(Paint.Align.CENTER);
+                    c.drawText("AP",x,y+radius*0.28f,p);
+                    String name=m.name();
+                    if(name.length()>22)name=name.substring(0,21)+"…";
+                    String mac=m.bssid.toUpperCase(Locale.US);
+                    float tx=x+radius+dp(3),ty=y-radius*0.2f;
+                    p.setTextSize(font);p.setTextAlign(Paint.Align.LEFT);
+                    float tw=Math.max(p.measureText(name),p.measureText(mac));
+                    p.setColor(Color.argb(225,255,255,255));
+                    c.drawRoundRect(new RectF(tx-dp(2),ty-font-dp(2),tx+tw+dp(3),ty+font+dp(5)),
+                        dp(3),dp(3),p);
+                    p.setColor(Color.BLACK);
+                    c.drawText(name,tx,ty,p);
+                    p.setTextSize(font*0.87f);
+                    c.drawText(mac,tx,ty+font,p);
                 }
             }
         }
@@ -540,7 +800,14 @@ public class MainActivity extends Activity {
                     if (!moved && !scaler.isInProgress() && floor!=null) {
                         float x=(e.getX()-panX)/zoom,y=(e.getY()-panY)/zoom;
                         RectF r=placement(getWidth(),getHeight());
-                        if (r.contains(x,y)) capture((x-r.left)/r.width(),(y-r.top)/r.height());
+                        if (r.contains(x,y)) {
+                            if(moveMarkerKey!=null)capture((x-r.left)/r.width(),(y-r.top)/r.height());
+                            else {
+                                ApMarker hit=hitMarker(x,y,r,dp(24)/zoom);
+                                if(hit!=null)editApMarker(hit);
+                                else capture((x-r.left)/r.width(),(y-r.top)/r.height());
+                            }
+                        }
                     }
                     return true;
                 default: return true;

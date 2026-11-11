@@ -510,7 +510,7 @@ public class AnalyzerActivity extends Activity {
                 text(c,"No fresh samples for this AP yet",dp(25),h/2,Color.GRAY,13);return;
             }
             List<Point> points=new ArrayList<>(deque);
-            p.setColor(Color.rgb(20,115,192));p.setStrokeWidth(dp(2.5f));p.setStyle(Paint.Style.STROKE);
+            p.setColor(Color.rgb(20,115,192));p.setStrokeWidth(dp(3));p.setStyle(Paint.Style.STROKE);
             float previousX=0,previousY=0;
             for(int i=0;i<points.size();i++){
                 float x=left+(right-left)*(points.size()==1?0.5f:i/(float)(points.size()-1));

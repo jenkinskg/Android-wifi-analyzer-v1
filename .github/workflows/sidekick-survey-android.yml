@@ -37,17 +37,17 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Sidekick-Survey-Android-v0.4-Debug-APK
+          name: Sidekick-Survey-Android-v0.5-Debug-APK
           path: SidekickSurveyAndroid/app/build/outputs/apk/debug/app-debug.apk
       - name: Publish direct-download APK to repository
         if: github.ref == 'refs/heads/sidekick-jpg-survey'
         run: |
           mkdir -p ../apks
-          cp app/build/outputs/apk/debug/app-debug.apk ../apks/Sidekick-Survey-Android-v0.4.apk
+          cp app/build/outputs/apk/debug/app-debug.apk ../apks/Sidekick-Survey-Android-v0.5.apk
           cd ..
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apks/Sidekick-Survey-Android-v0.4.apk
+          git add apks/Sidekick-Survey-Android-v0.5.apk
           if ! git diff --cached --quiet; then
             git commit -m "Publish Sidekick Survey Android installable APK [skip ci]"
             git push origin HEAD:sidekick-jpg-survey

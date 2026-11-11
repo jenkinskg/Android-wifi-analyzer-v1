@@ -91,3 +91,13 @@ JPG from v0.1 and import it in v0.3 if needed. Keep v0.1 installed until migrate
 - Destructive actions are confirmed, and JPG floor plan is kept when clearing measurements.
 - A short 250ms tap guard helps avoid duplicate measurements from accidental rapid taps.
 - IMPORTANT: field test on your Android hardware remains necessary; passing CI compilation is not evidence of an instrument-quality survey or runtime validation. Android Wi-Fi scan throttling still applies.
+
+## v0.5 — Per-point strongest BSSID, fresh scan capture
+- Every tap on an empty map position requests a **new Android Wi-Fi scan** and records the survey point after a confirmed scan broadcast.
+- If Android throttles or doesn't finish within 8.5 seconds, users must explicitly choose **Retry**, **Save cached**, or **Cancel**. Cached readings are marked, not treated as live measurements or used to place AP pins.
+- Each numbered survey point shows the **strongest detected AP's SSID, full BSSID/MAC, and RSSI**, independent of the proximity threshold. The adjacent AP-location pin threshold remains adjustable.
+- Tapping a numbered point shows its details and lets the user **choose any other BSSID observed at that point** rather than only the strongest.
+- Point labels can be toggled on or off to reduce clutter and appear in exported JPGs when enabled.
+- Survey CSV records the selected BSSID and fresh/cached status for each measurement.
+- Android app ID v5 installs beside prior versions to preserve their data; surveys remain stored per app (not automatically transferred).
+- Strongest RSSI is a **proxy** for nearby AP presence, not a measurement of physical proximity, especially where multiple AP radios, directional antennas, walls, or transmit power differences exist.

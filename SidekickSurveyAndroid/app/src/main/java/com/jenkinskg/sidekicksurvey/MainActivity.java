@@ -78,6 +78,15 @@ public class MainActivity extends Activity {
     private String target = "BEST";
     private boolean registered;
     private long lastCompletedScan = 0L;
+    private boolean pendingSurveyCapture=false;
+    private float pendingSurveyX,pendingSurveyY;
+    private boolean displayPointLabels=true;
+    private int freshScanCounter=0;
+    private Button pointLabelButton;
+    private final Runnable scanCaptureTimeout=()->{
+        if(pendingSurveyCapture)offerCachedCapture("No new scan results received. Android may be limiting scans.");
+    };
+
     // A marker is an RSSI-peak survey estimate, not a triangulated AP position.
     private final LinkedHashMap<String,ApMarker> apMarkers = new LinkedHashMap<>();
     // Explicitly removed APs remain hidden until the user restores them.
@@ -123,16 +132,40 @@ public class MainActivity extends Activity {
     }
     static class Sample {
         float x,y;
-        long timestamp;
+        long timestamp,scanAt;
+        boolean fresh=false;
+        String selectedBssid="";
         ArrayList<Reading> readings = new ArrayList<>();
-        Sample(float a, float b) { x=a; y=b; timestamp=System.currentTimeMillis(); }
+        Sample(float a,float b){ x=a;y=b;timestamp=System.currentTimeMillis(); }
+        Reading strongest() {
+            Reading top=null;
+            for(Reading r:readings){
+                if(r.bssid==null||r.bssid.isEmpty())continue;
+                if(top==null||r.dbm>top.dbm)top=r;
+            }
+            return top;
+        }
+        Reading displayedAp(){
+            if(selectedBssid!=null && !selectedBssid.isEmpty())
+                for(Reading r:readings)if(selectedBssid.equalsIgnoreCase(r.bssid))return r;
+            return strongest();
+        }
     }
 
     private final BroadcastReceiver scanReceiver = new BroadcastReceiver() {
-        @Override public void onReceive(Context ctx, Intent intent) {
-            boolean fresh = intent.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false);
-            if (fresh) lastCompletedScan = System.currentTimeMillis();
-            loadWifiResults(fresh ? "Scan finished" : "Scan not updated; readings may be cached");
+        @Override public void onReceive(Context ctx,Intent intent) {
+            boolean fresh=intent.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED,false);
+            if(fresh){lastCompletedScan=System.currentTimeMillis();freshScanCounter++;}
+            loadWifiResults(fresh?"FRESH scan #"+freshScanCounter:"CACHED / scan not updated");
+            if(pendingSurveyCapture&&fresh){
+                scanHandler.removeCallbacks(scanCaptureTimeout);
+                boolean had=pendingSurveyCapture;
+                pendingSurveyCapture=false;
+                if(had)commitCapture(pendingSurveyX,pendingSurveyY,true);
+            } else if(pendingSurveyCapture&&!fresh) {
+                scanHandler.removeCallbacks(scanCaptureTimeout);
+                offerCachedCapture("Android scan did not update.");
+            }
         }
     };
 
@@ -163,13 +196,13 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.WHITE);
         setContentView(root);
-        TextView title = text("Sidekick Survey  |  v0.4 Stable Mapping",20);
+        TextView title = text("Sidekick Survey  |  v0.5 Closest AP by Point",20);
         title.setTextColor(Color.rgb(16,60,100));
         root.addView(title);
         root.addView(button("Open Wi-Fi Analyzer  •  APs  |  Channels  |  Signal  |  Health",
             v->startActivity(new Intent(this,AnalyzerActivity.class))));
         usbStatus = text("",12); root.addView(usbStatus);
-        status = text("Walk, scan, tap your location: close APs get estimated pins.",13);
+        status = text("Tap your position: app requests fresh Wi-Fi scan, then labels the strongest AP at that point.",13);
         root.addView(status);
         addButtons(root,
             button("Import JPG", v-> pickMap()),
@@ -179,6 +212,12 @@ public class MainActivity extends Activity {
         sensitivityButton = button("Near: -55 dBm",v->chooseSensitivity());
         addButtons(root,autoScanButton,sensitivityButton,
             button("AP Inventory",v->showApInventory()));
+        pointLabelButton=button("Point MAC labels: ON",v->{
+            displayPointLabels=!displayPointLabels;
+            pointLabelButton.setText(displayPointLabels?"Point MAC labels: ON":"Point MAC labels: OFF");
+            if(map!=null)map.invalidate();
+        });
+        root.addView(pointLabelButton,new LinearLayout.LayoutParams(-1,dp(40)));
         LinearLayout selectionRow = new LinearLayout(this);
         selectionRow.setOrientation(LinearLayout.HORIZONTAL);
         selectionRow.addView(text("Coverage target:",13));
@@ -223,10 +262,13 @@ public class MainActivity extends Activity {
     }
     @Override public void onPause() {
         scanHandler.removeCallbacks(scanLoop);
+        scanHandler.removeCallbacks(scanCaptureTimeout);
+        pendingSurveyCapture=false;
         super.onPause();
     }
     @Override public void onDestroy() {
         scanHandler.removeCallbacks(scanLoop);
+        scanHandler.removeCallbacks(scanCaptureTimeout);
         if(map!=null)map.release();
         saveExecutor.shutdown();
         if (registered) unregisterReceiver(scanReceiver);
@@ -286,8 +328,8 @@ public class MainActivity extends Activity {
         }
         try {
             boolean requested=wifi.startScan();
-            if (requested) status.setText("Wi-Fi scan requested; waiting for results...");
-            else loadWifiResults("Scan throttled/declined: showing cached scan results");
+            if (requested) status.setText("Wi-Fi scan requested. Tap a map position to measure with a fresh scan.");
+            else loadWifiResults("CACHED: scan throttled/declined; existing results may be old");
         } catch (SecurityException e) { status.setText("Location permission is required for scanning."); }
     }
     @Override public void onRequestPermissionsResult(int code, String[] p, int[] results) {
@@ -313,8 +355,12 @@ public class MainActivity extends Activity {
                .append("  ").append(r.bssid).append("\n");
         }
         resultsText.setText(top.length()==0?"No APs visible.":top.toString());
-        String date = lastCompletedScan==0?"none":"updated "+new SimpleDateFormat("HH:mm:ss",Locale.US).format(new Date(lastCompletedScan));
-        status.setText(note+" | "+current.size()+" APs | "+date+" | "+samples.size()+" map points");
+        String date=lastCompletedScan==0?"No confirmed fresh scan":
+            "last fresh "+new SimpleDateFormat("HH:mm:ss",Locale.US).format(new Date(lastCompletedScan));
+        Reading strongest=current.isEmpty()?null:current.get(0);
+        String best=strongest==null?"none":strongest.bssid+" "+strongest.dbm+" dBm";
+        status.setText(note+"  |  "+current.size()+" APs  |  "+date+
+            "\nStrongest NOW: "+best+"  |  "+samples.size()+" survey points");
         updateSelectors();
     }
     private int channel(int mhz) {
@@ -420,31 +466,74 @@ public class MainActivity extends Activity {
         }
     }
     private void capture(float x,float y) {
-        if (floor==null) { Toast.makeText(this,"Import JPG floor plan first.",Toast.LENGTH_SHORT).show(); return; }
-        if (moveMarkerKey!=null) {
+        if(floor==null) {Toast.makeText(this,"Import JPG floor plan first.",Toast.LENGTH_SHORT).show();return;}
+        if(moveMarkerKey!=null){
             ApMarker selected=apMarkers.get(moveMarkerKey);
             moveMarkerKey=null;
-            if(selected!=null) {
+            if(selected!=null){
                 selected.x=x;selected.y=y;selected.pinned=true;
                 persist();map.invalidate();
-                status.setText("Moved "+selected.name()+" to manually selected position.");
+                status.setText("Moved "+selected.name()+" to its manually selected location.");
             }
             return;
         }
-        if (current.isEmpty()) { Toast.makeText(this,"Scan Wi-Fi first; no AP readings yet.",Toast.LENGTH_LONG).show(); return; }
-        Sample sample=new Sample(x,y);
-        sample.readings.addAll(current);
-        samples.add(sample);
-        int placed=placeNearbyAps(sample);
-        persist();
-        updateSelectors(); map.regenerate();
-        String stale=(lastCompletedScan==0 || System.currentTimeMillis()-lastCompletedScan>120000L)
-            ?" Readings may be stale; tap Scan Wi-Fi.":"";
-        status.setText("Point "+samples.size()+" saved; "+placed+" new AP pins, "+apMarkers.size()+" total."+stale);
+        if(pendingSurveyCapture){
+            Toast.makeText(this,"Scan in progress. One survey point at a time.",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED
+            || !locationEnabled() || wifi==null || !wifi.isWifiEnabled()){
+            scanWifi();
+            Toast.makeText(this,"Enable Wi-Fi and precise location, then tap this position again.",Toast.LENGTH_LONG).show();
+            return;
+        }
+        pendingSurveyCapture=true;
+        pendingSurveyX=x;pendingSurveyY=y;
+        status.setText("Scanning Wi-Fi at your marked position. Waiting for FRESH readings...");
+        try {
+            boolean accepted=wifi.startScan();
+            if(accepted)scanHandler.postDelayed(scanCaptureTimeout,8500L);
+            else offerCachedCapture("Fresh scan rejected/throttled by Android.");
+        }catch(SecurityException exception){
+            pendingSurveyCapture=false;
+            status.setText("Android denied Wi-Fi scan. Check precise location permission.");
+        }
+    }
+    private void offerCachedCapture(String reason) {
+        if(!pendingSurveyCapture)return;
+        scanHandler.removeCallbacks(scanCaptureTimeout);
+        final float x=pendingSurveyX,y=pendingSurveyY;
+        pendingSurveyCapture=false;
+        if(isFinishing()||isDestroyed())return;
+        new AlertDialog.Builder(this).setTitle("No fresh Wi-Fi scan")
+            .setMessage(reason+"\n\nSaving cached measurements may repeatedly show the SAME AP/MAC even as you walk. Retry when Wi-Fi scan limits allow, or explicitly save the cached snapshot.")
+            .setPositiveButton("Retry scan",(dialog,which)->capture(x,y))
+            .setNeutralButton("Save cached",(dialog,which)->commitCapture(x,y,false))
+            .setNegativeButton("Cancel",null)
+            .show();
+    }
+    private void commitCapture(float x,float y,boolean fresh) {
+        if(current.isEmpty()){
+            Toast.makeText(this,"No Wi-Fi readings to record; scan Wi-Fi again.",Toast.LENGTH_LONG).show();
+            return;
+        }
+        Sample point=new Sample(x,y);
+        point.readings.addAll(current);
+        point.fresh=fresh;
+        point.scanAt=fresh?lastCompletedScan:0L;
+        Reading strongest=point.strongest();
+        point.selectedBssid=strongest==null?"":strongest.bssid;
+        samples.add(point);
+        // Cached snapshots are displayed distinctly but never used to locate AP pins.
+        int added=fresh?placeNearbyAps(point):0;
+        persist();updateSelectors();
+        status.setText("Point "+samples.size()+"  •  "+(fresh?"FRESH":"CACHED")+"  •  strongest: "+
+             (strongest==null?"none":strongest.bssid+" "+strongest.dbm+" dBm")+
+             "\n"+added+" new estimated AP location pins. Touch a point to choose another visible AP.");
     }
     private int placeNearbyAps(Sample s) {
         // Never infer a new AP pin from a stale or unconfirmed Android scan.
-        if(lastCompletedScan==0 || System.currentTimeMillis()-lastCompletedScan>120000L)return 0;
+        if(!s.fresh || lastCompletedScan==0 || System.currentTimeMillis()-lastCompletedScan>120000L)return 0;
         int added=0;
         // Samples are already sorted strongest-first. Never create an unlimited pile
         // of AP pins at a single point. Existing estimates can improve at any point.
@@ -538,10 +627,37 @@ public class MainActivity extends Activity {
         int index=samples.indexOf(s);
         if(index<0)return;
         String stamp=new SimpleDateFormat("HH:mm:ss",Locale.US).format(new Date(s.timestamp));
+        Reading ap=s.displayedAp();
+        String detail=ap==null?"No AP":ap.ssid+"\n"+ap.bssid+"  "+ap.dbm+" dBm";
         new AlertDialog.Builder(this).setTitle("Survey point "+(index+1))
-            .setMessage("Recorded at "+stamp+" with "+s.readings.size()+" Wi-Fi readings.\nRemove only this survey measurement? AP pins are kept.")
-            .setPositiveButton("Remove point",(d,w)->removeSample(s))
+            .setMessage("Recorded at "+stamp+"  •  "+(s.fresh?"FRESH":"CACHED/UNKNOWN")+
+                "\nStrongest/selected AP: "+detail+
+                "\nSeen: "+s.readings.size()+" BSSIDs. Choose another AP from those seen, or remove this point.")
+            .setPositiveButton("Choose AP",(d,w)->choosePointAp(s))
+            .setNeutralButton("Remove point",(d,w)->confirmAction("Remove point","Remove this survey point?",()->removeSample(s)))
             .setNegativeButton("Cancel",null).show();
+    }
+    private void choosePointAp(Sample sample) {
+        ArrayList<Reading> options=new ArrayList<>();
+        for(Reading r:sample.readings)if(r.bssid!=null&&!r.bssid.isEmpty())options.add(r);
+        options.sort((a,b)->Integer.compare(b.dbm,a.dbm));
+        if(options.isEmpty()){Toast.makeText(this,"No APs at this point",Toast.LENGTH_SHORT).show();return;}
+        String[] labels=new String[options.size()];
+        for(int i=0;i<options.size();i++){
+            Reading r=options.get(i);
+            labels[i]=(r.ssid.isEmpty()?"<hidden>":r.ssid)+"  "+r.dbm+" dBm  ch "+channel(r.mhz)+"\n"+r.bssid;
+        }
+        new AlertDialog.Builder(this).setTitle("Show AP at this survey point")
+            .setSingleChoiceItems(labels,findSelectedIndex(options,sample.selectedBssid),(dialog,which)->{
+                sample.selectedBssid=options.get(which).bssid;
+                onSurveyChanged("Point AP selected: "+sample.selectedBssid);
+                dialog.dismiss();
+            })
+            .setNegativeButton("Cancel",null).show();
+    }
+    private int findSelectedIndex(List<Reading> options,String chosen){
+        for(int i=0;i<options.size();i++)if(options.get(i).bssid.equalsIgnoreCase(chosen))return i;
+        return 0;
     }
     private Sample hitSample(float px,float py,RectF area,float tolerance) {
         Sample nearest=null;
@@ -678,14 +794,16 @@ public class MainActivity extends Activity {
     }
     private String csv(String v) { return "\"" + (v==null?"":v).replace("\"","\"\"") + "\""; }
     private String makeCsv() {
-        StringBuilder sb=new StringBuilder("timestamp,x_percent,y_percent,ssid,bssid,frequency_mhz,channel,rssi_dbm,source\n");
+        StringBuilder sb=new StringBuilder("timestamp,x_percent,y_percent,ssid,bssid,frequency_mhz,channel,rssi_dbm,source,point_selected_bssid,point_scan_fresh,point_scan_time\n");
         SimpleDateFormat fmt=new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.US);
         for (Sample s:samples) for (Reading r:s.readings) {
             sb.append(csv(fmt.format(new Date(s.timestamp)))).append(',')
               .append(String.format(Locale.US,"%.2f,%.2f",s.x*100,s.y*100)).append(',')
               .append(csv(r.ssid)).append(',').append(csv(r.bssid)).append(',')
               .append(r.mhz).append(',').append(channel(r.mhz)).append(',')
-              .append(r.dbm).append(',').append(csv(SOURCE)).append('\n');
+              .append(r.dbm).append(',').append(csv(SOURCE)).append(',')
+              .append(csv(s.selectedBssid)).append(',').append(s.fresh).append(',')
+              .append(csv(s.scanAt>0?fmt.format(new Date(s.scanAt)):"cached/unknown")).append('\n');
         }
         return sb.toString();
     }
@@ -725,6 +843,9 @@ public class MainActivity extends Activity {
                     JSONObject entry=new JSONObject();
                     entry.put("x",sample.x);entry.put("y",sample.y);
                     entry.put("time",sample.timestamp);
+                    entry.put("fresh",sample.fresh);
+                    entry.put("scanAt",sample.scanAt);
+                    entry.put("selectedBssid",sample.selectedBssid);
                     JSONArray readings=new JSONArray();
                     for(Reading reading:sample.readings) {
                         JSONObject r=new JSONObject();
@@ -794,6 +915,9 @@ public class MainActivity extends Activity {
                     JSONObject a=array.getJSONObject(i);
                     Sample s=new Sample((float)a.getDouble("x"),(float)a.getDouble("y"));
                     s.timestamp=a.optLong("time",System.currentTimeMillis());
+                    s.fresh=a.optBoolean("fresh",false);
+                    s.scanAt=a.optLong("scanAt",0L);
+                    s.selectedBssid=a.optString("selectedBssid","");
                     JSONArray readings=a.optJSONArray("readings");
                     if (readings!=null) for (int j=0;j<readings.length();j++) {
                         JSONObject r=readings.getJSONObject(j);
@@ -871,6 +995,25 @@ public class MainActivity extends Activity {
                     p.setColor(Color.BLACK);p.setTextSize(Math.max(dp(7),pointRadius));
                     p.setTextAlign(Paint.Align.CENTER);
                     c.drawText(String.valueOf(i+1),x,y+pointRadius/3,p);
+                    if(displayPointLabels){
+                        Reading ap=s.displayedAp();
+                        if(ap!=null){
+                            String label=(ap.ssid==null||ap.ssid.isEmpty()?"AP":ap.ssid);
+                            if(label.length()>13)label=label.substring(0,12)+"…";
+                            float fs=Math.max(dp(9),Math.min(dp(12),area.width()/160f));
+                            p.setTextAlign(Paint.Align.LEFT);p.setTextSize(fs);
+                            String line1=label+"  "+ap.dbm+" dBm"+(s.fresh?"":" [cached]");
+                            String line2=ap.bssid.toUpperCase(Locale.US);
+                            float boxWidth=Math.max(p.measureText(line1),p.measureText(line2))+dp(8);
+                            float bx=x+pointRadius+dp(2),by=y+pointRadius+dp(2);
+                            p.setColor(Color.argb(236,248,250,255));
+                            c.drawRoundRect(new RectF(bx,by,bx+boxWidth,by+fs*2.55f),dp(3),dp(3),p);
+                            p.setColor(s.fresh?Color.rgb(19,55,95):Color.rgb(145,77,25));
+                            c.drawText(line1,bx+dp(4),by+fs,p);
+                            p.setTextSize(fs*0.94f);
+                            c.drawText(line2,bx+dp(4),by+fs*2.15f,p);
+                        }
+                    }
                 }
                 // AP pins are drawn after sample dots and the heatmap, so they remain visible.
                 float radius=Math.max(dp(10),Math.min(dp(17),area.width()/95f));

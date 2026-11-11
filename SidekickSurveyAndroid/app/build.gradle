@@ -5,11 +5,11 @@ android {
     compileSdk 35
 
     defaultConfig {
-        applicationId 'com.jenkinskg.sidekicksurvey.v4'
+        applicationId 'com.jenkinskg.sidekicksurvey.v5'
         minSdk 26
         targetSdk 35
-        versionCode 4
-        versionName '0.4-responsive-selective-clear'
+        versionCode 5
+        versionName '0.5-per-point-closest-ap'
     }
 
     buildTypes {

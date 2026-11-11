@@ -48,3 +48,10 @@ The new Analyzer does not touch existing saved JPG floor plans/survey data. This
 still an Android-phone-radio analyzer, *not* direct Sidekick 2 RF access. The dedicated
 spectrum analyzer, calibration, noise floor, packet capture, Wi-Fi 6 GHz channel coverage,
 and interference readings require a compatible Sidekick SDK/interface and external hardware.
+
+## Install v0.2 without removing v0.1
+GitHub Actions debug builds use different signing certificates. v0.2 uses a distinct
+Android application ID (`com.jenkinskg.sidekicksurvey.v2`) so it installs **beside**
+v0.1 rather than failing as an update or deleting v0.1's local survey data.
+Saved maps and survey points in v0.1 do not automatically move to v0.2. Export the
+JPG from v0.1 and import it in v0.2 if needed. Keep v0.1 installed until migrated.

@@ -196,11 +196,13 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.WHITE);
         setContentView(root);
-        TextView title = text("Sidekick Survey  |  v0.5 Closest AP by Point",20);
+        TextView title = text("Sidekick Survey  |  v0.6 Wi-Fi Roaming Monitor",20);
         title.setTextColor(Color.rgb(16,60,100));
         root.addView(title);
         root.addView(button("Open Wi-Fi Analyzer  •  APs  |  Channels  |  Signal  |  Health",
             v->startActivity(new Intent(this,AnalyzerActivity.class))));
+        root.addView(button("Roaming Monitor  •  Connected AP / strongest BSSID (0.5s)",
+            v->startActivity(new Intent(this,RoamingActivity.class))));
         usbStatus = text("",12); root.addView(usbStatus);
         status = text("Tap your position: app requests fresh Wi-Fi scan, then labels the strongest AP at that point.",13);
         root.addView(status);

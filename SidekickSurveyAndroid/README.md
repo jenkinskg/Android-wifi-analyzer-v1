@@ -101,3 +101,12 @@ JPG from v0.1 and import it in v0.3 if needed. Keep v0.1 installed until migrate
 - Survey CSV records the selected BSSID and fresh/cached status for each measurement.
 - Android app ID v5 installs beside prior versions to preserve their data; surveys remain stored per app (not automatically transferred).
 - Strongest RSSI is a **proxy** for nearby AP presence, not a measurement of physical proximity, especially where multiple AP radios, directional antennas, walls, or transmit power differences exist.
+
+## v0.6 — connected AP roaming monitor (safe 500ms mode)
+- Open **Roaming Monitor** on the home survey screen.
+- Every **0.5 second**, read the **actually connected BSSID** and RSSI using Android `WifiManager.getConnectionInfo()`; log changes/roams on this session.
+- Compare current connected BSSID with **strongest recently scanned AP on the SAME SSID**, and show strongest overall AP for context; flag potential roam candidates when at least **8 dBm** stronger. RSSI alone cannot determine best client association.
+- Scan results update only when Android sends Wi-Fi scan results broadcasts. Optional manual/auto scan requests are spaced **40 seconds apart**; 500ms polling does NOT mean 500ms scanning.
+- A scan older than 90 seconds is labeled stale; no current-roam recommendation from stale scan results.
+- **Never** disconnect, force reconnect, toggle Wi-Fi, or claim to control system roaming; Android restricts those capabilities and forcing a handoff every 500ms is disruptive. Optional Wi-Fi Settings opens the standard system UI.
+- Version v0.6 has its own package ID and does not overwrite or import the v0.5 private survey data. Field testing required.

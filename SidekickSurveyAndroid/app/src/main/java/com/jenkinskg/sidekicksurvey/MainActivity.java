@@ -14,6 +14,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.util.AtomicFile;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.location.LocationManager;
@@ -53,6 +54,10 @@ import java.util.Locale;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.HashSet;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class MainActivity extends Activity {
     private static final int PICK_MAP = 100;
@@ -75,11 +80,19 @@ public class MainActivity extends Activity {
     private long lastCompletedScan = 0L;
     // A marker is an RSSI-peak survey estimate, not a triangulated AP position.
     private final LinkedHashMap<String,ApMarker> apMarkers = new LinkedHashMap<>();
+    // Explicitly removed APs remain hidden until the user restores them.
+    private final HashSet<String> hiddenApKeys = new HashSet<>();
+    // Disk saving never blocks the main Android screen thread.
+    private final ExecutorService saveExecutor = Executors.newSingleThreadExecutor();
+    private final AtomicInteger saveRevision = new AtomicInteger();
+
     private final android.os.Handler scanHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private boolean autoScan = false;
     private int nearbyThreshold = -55;
     private String moveMarkerKey = null;
     private Button autoScanButton, sensitivityButton;
+    private long lastTouchCaptured = 0L;
+
     private final Runnable scanLoop = new Runnable() {
         @Override public void run() {
             if (!autoScan || isFinishing()) return;
@@ -150,7 +163,7 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.WHITE);
         setContentView(root);
-        TextView title = text("Sidekick Survey  |  v0.3 AP Mapping",20);
+        TextView title = text("Sidekick Survey  |  v0.4 Stable Mapping",20);
         title.setTextColor(Color.rgb(16,60,100));
         root.addView(title);
         root.addView(button("Open Wi-Fi Analyzer  •  APs  |  Channels  |  Signal  |  Health",
@@ -178,7 +191,7 @@ public class MainActivity extends Activity {
             button("Save JPG", v-> beginSave(SAVE_JPG, "image/jpeg", "survey-map.jpg")),
             button("Survey CSV", v-> beginSave(SAVE_CSV, "text/csv", "survey-data.csv")),
             button("AP CSV", v-> beginSave(SAVE_AP_CSV, "text/csv", "access-points.csv")),
-            button("Clear", v-> confirmClear()));
+            button("Selective Clear", v-> showSelectiveClear()));
         resultsText = text("No scan results yet.",12);
         ScrollView scroll = new ScrollView(this);
         scroll.addView(resultsText);
@@ -214,6 +227,8 @@ public class MainActivity extends Activity {
     }
     @Override public void onDestroy() {
         scanHandler.removeCallbacks(scanLoop);
+        if(map!=null)map.release();
+        saveExecutor.shutdown();
         if (registered) unregisterReceiver(scanReceiver);
         super.onDestroy();
     }
@@ -360,7 +375,8 @@ public class MainActivity extends Activity {
                 Bitmap loaded=readScaledMap(data.getData());
                 if (loaded==null) throw new Exception("Invalid image");
                 floor=loaded;
-                samples.clear(); apMarkers.clear(); moveMarkerKey=null; target="BEST";
+                samples.clear(); apMarkers.clear(); hiddenApKeys.clear();
+                moveMarkerKey=null; target="BEST";
                 try (OutputStream out=new FileOutputStream(new File(getFilesDir(),"floorplan.jpg"))) {
                     floor.compress(Bitmap.CompressFormat.JPEG,94,out);
                 }
@@ -434,6 +450,7 @@ public class MainActivity extends Activity {
         // of AP pins at a single point. Existing estimates can improve at any point.
         for(Reading r:s.readings) {
             if(r.bssid==null || r.bssid.trim().isEmpty() || r.dbm<nearbyThreshold)continue;
+            if(hiddenApKeys.contains(r.bssid.toLowerCase(Locale.US)))continue;
             String key=r.bssid.toLowerCase(Locale.US);
             ApMarker m=apMarkers.get(key);
             if(m==null) {
@@ -465,8 +482,121 @@ public class MainActivity extends Activity {
             names[i]=m.name()+" | "+m.bssid+" | "+m.bestDbm+" dBm"+(m.verified?" ✓ verified":"");
         }
         new AlertDialog.Builder(this).setTitle("AP Inventory ("+list.size()+")")
-            .setItems(names,(dialog,which)->editApMarker(list.get(which)))
+            .setItems(names,(dialog,which)->showApActions(list.get(which)))
             .setPositiveButton("Close",null).show();
+    }
+    private void showApActions(ApMarker m) {
+        if(m==null)return;
+        final String[] actions={"Rename AP","Edit AP details","Move AP pin","Remove AP pin"};
+        new AlertDialog.Builder(this).setTitle(m.name()+"\n"+m.bssid)
+            .setItems(actions,(dialog,index)->{
+                if(index==0)renameAp(m);
+                else if(index==1)editApMarker(m);
+                else if(index==2){
+                    moveMarkerKey=m.bssid;
+                    status.setText("Tap verified AP position on the map for "+m.name()+".");
+                    Toast.makeText(this,"Tap the new pin position on the floor plan",Toast.LENGTH_LONG).show();
+                }
+                else if(index==3)confirmAction("Remove AP pin",
+                    "Remove "+m.name()+" ("+m.bssid+")? It will stay hidden on future scans until you restore hidden APs.",
+                    ()->{apMarkers.remove(m.bssid);hiddenApKeys.add(m.bssid);
+                         if(m.bssid.equals(moveMarkerKey))moveMarkerKey=null;
+                         onSurveyChanged("Removed AP pin "+m.name()+".");});
+            })
+            .setNegativeButton("Cancel",null).show();
+    }
+    private void renameAp(ApMarker m){
+        final EditText edit=new EditText(this);
+        edit.setSingleLine(true);
+        edit.setText(m.apName==null?"":m.apName);
+        edit.setSelectAllOnFocus(true);
+        int p=dp(16);edit.setPadding(p,p,p,p);
+        new AlertDialog.Builder(this).setTitle("Rename "+m.bssid)
+            .setView(edit)
+            .setPositiveButton("Save",(dialog,which)->{
+                m.apName=edit.getText().toString().trim();
+                onSurveyChanged("AP renamed: "+m.name());
+            })
+            .setNegativeButton("Cancel",null).show();
+    }
+    private void confirmAction(String title,String message,Runnable action) {
+        new AlertDialog.Builder(this).setTitle(title).setMessage(message)
+            .setPositiveButton("Remove",(d,w)->action.run())
+            .setNegativeButton("Cancel",null).show();
+    }
+    private void onSurveyChanged(String message) {
+        persist();
+        updateSelectors();
+        map.regenerate();
+        status.setText(message+"  •  "+samples.size()+" points, "+apMarkers.size()+" AP pins");
+    }
+    private void removeSample(Sample s) {
+        if(samples.remove(s))onSurveyChanged("Survey point removed");
+    }
+    private void showSampleActions(Sample s) {
+        if(s==null)return;
+        int index=samples.indexOf(s);
+        if(index<0)return;
+        String stamp=new SimpleDateFormat("HH:mm:ss",Locale.US).format(new Date(s.timestamp));
+        new AlertDialog.Builder(this).setTitle("Survey point "+(index+1))
+            .setMessage("Recorded at "+stamp+" with "+s.readings.size()+" Wi-Fi readings.\nRemove only this survey measurement? AP pins are kept.")
+            .setPositiveButton("Remove point",(d,w)->removeSample(s))
+            .setNegativeButton("Cancel",null).show();
+    }
+    private Sample hitSample(float px,float py,RectF area,float tolerance) {
+        Sample nearest=null;
+        float best=tolerance*tolerance;
+        for(Sample s:samples){
+            float x=area.left+s.x*area.width(),y=area.top+s.y*area.height();
+            float dx=px-x,dy=py-y;
+            float dist=dx*dx+dy*dy;
+            if(dist<best){best=dist;nearest=s;}
+        }
+        return nearest;
+    }
+    private void showSelectiveClear() {
+        final String[] choices={
+            "Remove last survey point",
+            "Choose survey point to remove",
+            "Choose AP pin to remove",
+            "Clear all survey points (keep AP pins)",
+            "Clear all AP pins (keep survey points)",
+            "Clear ALL measurements and AP pins",
+            "Restore hidden APs for future detection"
+        };
+        new AlertDialog.Builder(this).setTitle("Selective Clear")
+            .setItems(choices,(dialog,index)->{
+                if(index==0){
+                    if(samples.isEmpty()){Toast.makeText(this,"No survey points",Toast.LENGTH_SHORT).show();return;}
+                    Sample last=samples.get(samples.size()-1);
+                    confirmAction("Remove last point","Remove point "+samples.size()+" only?",()->removeSample(last));
+                } else if(index==1){
+                    if(samples.isEmpty()){Toast.makeText(this,"No survey points",Toast.LENGTH_SHORT).show();return;}
+                    String[] names=new String[samples.size()];
+                    SimpleDateFormat fmt=new SimpleDateFormat("HH:mm:ss",Locale.US);
+                    for(int i=0;i<samples.size();i++)names[i]="Point "+(i+1)+"  •  "+fmt.format(new Date(samples.get(i).timestamp));
+                    new AlertDialog.Builder(this).setTitle("Choose point")
+                        .setItems(names,(d,w)->showSampleActions(samples.get(w)))
+                        .setNegativeButton("Cancel",null).show();
+                } else if(index==2){
+                    if(apMarkers.isEmpty()){Toast.makeText(this,"No AP pins",Toast.LENGTH_SHORT).show();return;}
+                    showApInventory();
+                } else if(index==3)confirmAction("Clear survey measurements",
+                    "Delete all "+samples.size()+" numbered survey measurements, while keeping "+apMarkers.size()+" AP pins and their notes?",
+                    ()->{samples.clear();onSurveyChanged("All survey points cleared");});
+                else if(index==4)confirmAction("Clear AP pins",
+                    "Remove all "+apMarkers.size()+" AP pins and their editable notes? Previously mapped APs will stay hidden until you restore hidden APs.",
+                    ()->{hiddenApKeys.addAll(apMarkers.keySet());apMarkers.clear();moveMarkerKey=null;
+                         onSurveyChanged("All AP pins cleared");});
+                else if(index==5)confirmAction("Clear ALL survey data",
+                    "Delete all "+samples.size()+" measurements and "+apMarkers.size()+" AP pins, including their editable notes? The JPG floor plan remains.",
+                    ()->{samples.clear();apMarkers.clear();hiddenApKeys.clear();
+                         moveMarkerKey=null;onSurveyChanged("All survey data cleared");});
+                else if(index==6)confirmAction("Restore hidden APs",
+                    "Allow "+hiddenApKeys.size()+" previously removed AP identifiers to be detected on NEW survey taps?",
+                    ()->{hiddenApKeys.clear();onSurveyChanged("Hidden APs restored for future detection");});
+            })
+            .setNegativeButton("Cancel",null).show();
     }
     private EditText field(LinearLayout parent,String label,String value,boolean multi) {
         TextView t=text(label,12);parent.addView(t);
@@ -533,17 +663,9 @@ public class MainActivity extends Activity {
         }
         return found;
     }
-    private void confirmClear() {
-        if(samples.isEmpty()&&apMarkers.isEmpty())return;
-        new AlertDialog.Builder(this).setTitle("Clear survey and AP pins?")
-            .setMessage("Delete ALL local survey points and AP inventory notes for this map? Export a JPG and AP CSV first if you want to keep them.")
-            .setPositiveButton("Delete all",(d,w)->{
-                samples.clear();apMarkers.clear();moveMarkerKey=null;
-                persist();updateSelectors();map.regenerate();
-                status.setText("Survey points and AP pins cleared. Floor plan kept.");
-            })
-            .setNegativeButton("Cancel",null).show();
-    }
+    // Legacy clear entry now opens the safer granular selector.
+    private void confirmClear(){showSelectiveClear();}
+
     private int rssi(Sample s) {
         int best=-127;
         for (Reading r:s.readings) {
@@ -581,36 +703,67 @@ public class MainActivity extends Activity {
         return b.toString();
     }
     private void persist() {
-        try {
-            JSONObject root=new JSONObject();
-            JSONArray array=new JSONArray();
-            for (Sample s:samples) {
-                JSONObject sample=new JSONObject();
-                sample.put("x",s.x);sample.put("y",s.y);sample.put("time",s.timestamp);
-                JSONArray readings=new JSONArray();
-                for (Reading r:s.readings) {
-                    JSONObject o=new JSONObject();
-                    o.put("ssid",r.ssid);o.put("bssid",r.bssid);
-                    o.put("dbm",r.dbm);o.put("mhz",r.mhz);readings.put(o);
+        // Immutable snapshot references: samples/readings aren't modified after capture.
+        // AP marker fields are copied on the UI thread to avoid background races.
+        final ArrayList<Sample> surveySnapshot=new ArrayList<>(samples);
+        final ArrayList<ApMarker> pinSnapshot=new ArrayList<>();
+        for(ApMarker pin:apMarkers.values()) {
+            ApMarker m=new ApMarker(new Reading(pin.ssid,pin.bssid,pin.bestDbm,pin.frequency),pin.x,pin.y);
+            m.apName=pin.apName;m.room=pin.room;m.switchPort=pin.switchPort;
+            m.notes=pin.notes;m.pinned=pin.pinned;m.verified=pin.verified;
+            pinSnapshot.add(m);
+        }
+        final ArrayList<String> hiddenSnapshot=new ArrayList<>(hiddenApKeys);
+        final int threshold=nearbyThreshold;
+        final int ticket=saveRevision.incrementAndGet();
+        saveExecutor.execute(()->{
+            if(ticket!=saveRevision.get())return;
+            try {
+                JSONObject root=new JSONObject();
+                JSONArray array=new JSONArray();
+                for(Sample sample:surveySnapshot) {
+                    JSONObject entry=new JSONObject();
+                    entry.put("x",sample.x);entry.put("y",sample.y);
+                    entry.put("time",sample.timestamp);
+                    JSONArray readings=new JSONArray();
+                    for(Reading reading:sample.readings) {
+                        JSONObject r=new JSONObject();
+                        r.put("ssid",reading.ssid);r.put("bssid",reading.bssid);
+                        r.put("dbm",reading.dbm);r.put("mhz",reading.mhz);readings.put(r);
+                    }
+                    entry.put("readings",readings);array.put(entry);
                 }
-                sample.put("readings",readings);array.put(sample);
+                root.put("samples",array);
+                root.put("nearbyThreshold",threshold);
+                JSONArray pins=new JSONArray();
+                for(ApMarker m:pinSnapshot) {
+                    JSONObject p=new JSONObject();
+                    p.put("bssid",m.bssid);p.put("ssid",m.ssid);p.put("apName",m.apName);
+                    p.put("room",m.room);p.put("switchPort",m.switchPort);p.put("notes",m.notes);
+                    p.put("x",m.x);p.put("y",m.y);p.put("bestDbm",m.bestDbm);
+                    p.put("frequency",m.frequency);p.put("pinned",m.pinned);
+                    p.put("verified",m.verified);pins.put(p);
+                }
+                root.put("apMarkers",pins);
+                JSONArray removed=new JSONArray();
+                for(String id:hiddenSnapshot)removed.put(id);
+                root.put("hiddenApKeys",removed);
+                if(ticket!=saveRevision.get())return;
+                byte[] bytes=root.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                AtomicFile atomic=new AtomicFile(new File(getFilesDir(),"survey.json"));
+                FileOutputStream output=null;
+                try {
+                    output=atomic.startWrite();
+                    output.write(bytes);
+                    atomic.finishWrite(output);
+                } catch(Exception e) {
+                    if(output!=null)atomic.failWrite(output);
+                    throw e;
+                }
+            }catch(Exception e){
+                runOnUiThread(()->status.setText("Survey save failed: "+e.getMessage()));
             }
-            root.put("samples",array);
-            root.put("nearbyThreshold",nearbyThreshold);
-            JSONArray pins=new JSONArray();
-            for(ApMarker m:apMarkers.values()){
-                JSONObject p=new JSONObject();
-                p.put("bssid",m.bssid);p.put("ssid",m.ssid);p.put("apName",m.apName);
-                p.put("room",m.room);p.put("switchPort",m.switchPort);p.put("notes",m.notes);
-                p.put("x",m.x);p.put("y",m.y);p.put("bestDbm",m.bestDbm);
-                p.put("frequency",m.frequency);p.put("pinned",m.pinned);
-                p.put("verified",m.verified);pins.put(p);
-            }
-            root.put("apMarkers",pins);
-            try (FileOutputStream out=new FileOutputStream(new File(getFilesDir(),"survey.json"))) {
-                out.write(root.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            }
-        } catch (Exception e) { status.setText("Could not save survey: "+e.getMessage()); }
+        });
     }
     private void restore() {
         try {
@@ -622,6 +775,8 @@ public class MainActivity extends Activity {
                 JSONObject root=new JSONObject(new String(bytes,java.nio.charset.StandardCharsets.UTF_8));
                 nearbyThreshold=root.optInt("nearbyThreshold",-55);
                 if(sensitivityButton!=null)sensitivityButton.setText("Near: "+nearbyThreshold+" dBm");
+                JSONArray removed=root.optJSONArray("hiddenApKeys");
+                if(removed!=null)for(int i=0;i<removed.length();i++)hiddenApKeys.add(removed.optString(i));
                 JSONArray pins=root.optJSONArray("apMarkers");
                 if(pins!=null)for(int j=0;j<pins.length();j++){
                     JSONObject p=pins.getJSONObject(j);
@@ -657,6 +812,8 @@ public class MainActivity extends Activity {
         private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);
         private final ScaleGestureDetector scaler;
         private Bitmap heat;
+        private final ExecutorService heatExecutor=Executors.newSingleThreadExecutor();
+        private final AtomicInteger heatRevision=new AtomicInteger();
         private float zoom=1f, panX=0f, panY=0f;
         private float lastX,lastY,downX,downY;
         private boolean moved;
@@ -757,31 +914,66 @@ public class MainActivity extends Activity {
                 12,label.getTextSize()*1.5f,label);
             return out;
         }
+        void release() {
+            heatRevision.incrementAndGet();
+            heatExecutor.shutdownNow();
+            if(heat!=null){heat.recycle();heat=null;}
+        }
         void regenerate() {
-            if (heat!=null) { heat.recycle(); heat=null; }
-            if (floor==null || samples.isEmpty()) { invalidate(); return; }
-            int n=120;
-            int[] pixels=new int[n*n];
-            for (int y=0;y<n;y++) for (int x=0;x<n;x++) {
-                double nx=(x+0.5)/n, ny=(y+0.5)/n;
-                double sum=0,weight=0,nearest=99;
-                for (Sample s:samples) {
-                    int dbm=rssi(s);
-                    if (dbm<=-127) continue;
-                    double dx=nx-s.x,dy=ny-s.y;
-                    double d2=dx*dx+dy*dy;
-                    nearest=Math.min(nearest,Math.sqrt(d2));
-                    double w=1/(d2+0.00025);
-                    sum+=w*dbm;weight+=w;
-                }
-                if (weight==0 || nearest>0.30) { pixels[y*n+x]=Color.TRANSPARENT;continue; }
-                double value=sum/weight;
-                float hue=(float)Math.max(0,Math.min(120,(value+90)/30*120));
-                int alpha=(int)(160*Math.max(0,1-nearest/0.30));
-                pixels[y*n+x]=Color.HSVToColor(alpha,new float[]{hue,0.90f,0.94f});
+            final int revision=heatRevision.incrementAndGet();
+            if(floor==null || samples.isEmpty()) {
+                if(heat!=null){heat.recycle();heat=null;}
+                invalidate();
+                return;
             }
-            heat=Bitmap.createBitmap(pixels,n,n,Bitmap.Config.ARGB_8888);
-            invalidate();
+            // Cache only one RSSI value for each survey sample on the UI thread.
+            final int size=samples.size();
+            final float[] locationsX=new float[size];
+            final float[] locationsY=new float[size];
+            final int[] signal=new int[size];
+            for(int i=0;i<size;i++){
+                Sample sample=samples.get(i);
+                locationsX[i]=sample.x;locationsY[i]=sample.y;
+                signal[i]=rssi(sample);
+            }
+            // Latest request wins; previous work is dropped rather than queuing UI freezes.
+            heatExecutor.execute(()->{
+                if(revision!=heatRevision.get())return;
+                final int n=90;
+                int[] pixels=new int[n*n];
+                for(int y=0;y<n;y++){
+                    if(revision!=heatRevision.get()||Thread.currentThread().isInterrupted())return;
+                    for(int x=0;x<n;x++){
+                        double nx=(x+0.5)/n,ny=(y+0.5)/n;
+                        double sum=0,weight=0,nearest=99;
+                        for(int i=0;i<size;i++){
+                            int dbm=signal[i];if(dbm<=-127)continue;
+                            double dx=nx-locationsX[i],dy=ny-locationsY[i];
+                            double d2=dx*dx+dy*dy;
+                            nearest=Math.min(nearest,Math.sqrt(d2));
+                            double w=1/(d2+0.00025);
+                            sum+=w*dbm;weight+=w;
+                        }
+                        if(weight==0||nearest>0.30){pixels[y*n+x]=Color.TRANSPARENT;continue;}
+                        double value=sum/weight;
+                        float hue=(float)Math.max(0,Math.min(120,(value+90)/30*120));
+                        int alpha=(int)(160*Math.max(0,1-nearest/0.30));
+                        pixels[y*n+x]=Color.HSVToColor(alpha,new float[]{hue,0.90f,0.94f});
+                    }
+                }
+                if(revision!=heatRevision.get())return;
+                Bitmap result=Bitmap.createBitmap(pixels,n,n,Bitmap.Config.ARGB_8888);
+                post(()->{
+                    if(revision!=heatRevision.get()||isFinishing()||isDestroyed()){
+                        result.recycle();
+                        return;
+                    }
+                    Bitmap old=heat;
+                    heat=result;
+                    if(old!=null)old.recycle();
+                    invalidate();
+                });
+            });
         }
         @Override public boolean onTouchEvent(MotionEvent e) {
             scaler.onTouchEvent(e);
@@ -806,8 +998,15 @@ public class MainActivity extends Activity {
                             if(moveMarkerKey!=null)capture((x-r.left)/r.width(),(y-r.top)/r.height());
                             else {
                                 ApMarker hit=hitMarker(x,y,r,dp(24)/zoom);
-                                if(hit!=null)editApMarker(hit);
-                                else capture((x-r.left)/r.width(),(y-r.top)/r.height());
+                                if(hit!=null)showApActions(hit);
+                                else {
+                                    Sample point=hitSample(x,y,r,dp(15)/zoom);
+                                    if(point!=null)showSampleActions(point);
+                                    else if(android.os.SystemClock.elapsedRealtime()-lastTouchCaptured>=250){
+                                        lastTouchCaptured=android.os.SystemClock.elapsedRealtime();
+                                        capture((x-r.left)/r.width(),(y-r.top)/r.height());
+                                    }
+                                }
                             }
                         }
                     }

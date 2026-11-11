@@ -80,3 +80,14 @@ JPG from v0.1 and import it in v0.3 if needed. Keep v0.1 installed until migrate
 - Scan results can be cached or throttled on Android. Do not mistake the
   AP's position at the strongest recorded walking measurement for its true
   physical mounting location. Use visual confirmation to verify it.
+
+## v0.4 — ANR & selective editing improvements
+- Separate clean install: Android application ID `com.jenkinskg.sidekicksurvey.v4`, so installing it will NOT delete v0.3 data. Old maps can be exported from the old app; they are not auto-imported.
+- Heatmap interpolation runs on a dedicated background executor. Incoming survey points cancel obsolete heatmap requests; the latest heatmap swaps into view on the UI thread.
+- JSON persistence and atomic disk writes run on a background executor, using a copy of survey and AP metadata. Atomic file writes prevent partially written files.
+- Tap an AP pin: **Rename**, **Edit details**, **Move**, **Remove**. Removed AP identifiers remain hidden on future scans until restored using Selective Clear.
+- Tap a numbered survey point: inspect time/reading count or remove that single point.
+- Selective Clear supports remove last point, select point, select AP, clear points only, clear AP pins only, clear all measurements/pins, or restore hidden APs.
+- Destructive actions are confirmed, and JPG floor plan is kept when clearing measurements.
+- A short 250ms tap guard helps avoid duplicate measurements from accidental rapid taps.
+- IMPORTANT: field test on your Android hardware remains necessary; passing CI compilation is not evidence of an instrument-quality survey or runtime validation. Android Wi-Fi scan throttling still applies.

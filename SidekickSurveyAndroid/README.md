@@ -1,4 +1,4 @@
-# Sidekick Survey Android – JPG heatmaps (v0.1)
+# Sidekick Survey Android – JPG heatmaps (v0.2)
 
 A working **Android Wi-Fi survey prototype** that records the phone's Wi-Fi scan results at manually selected positions on an imported JPG/PNG floor plan. This is a separate project from the older ZIP-based Wi-Fi Analyzer in the repository.
 
@@ -30,3 +30,21 @@ A working **Android Wi-Fi survey prototype** that records the phone's Wi-Fi scan
 - Wi-Fi capabilities, 6 GHz visibility, and exact scan channels depend on the Android device and permissions. No unsupported noise-floor, SNR, spectrum, or packet-capture claims.
 - User-selected map points are manually placed; this app does not infer indoor positioning.
 - Imported floor plans are downsampled to ~2400 px maximum side to limit memory use. Exported JPG contains the overlaid map at this resolution.
+
+## v0.2 Analyzer screen
+From the JPG survey screen tap **Open Wi-Fi Analyzer**.
+- **Access points**: sortable strongest-first list with detailed BSSID, SSID, channel,
+  2.4/5/6-GHz band, RSSI, Wi-Fi generation, security capabilities and 20–320 MHz advertised width.
+- **Channels**: per-band bar chart of APs seen on each *primary channel*.
+  This is an AP-count proxy, NOT measured channel utilization, RF noise or spectrum analysis.
+- **Signal history**: pick a particular AP; graph RSSI from confirmed fresh scans only.
+- **Health checks**: weak-signal observations, potentially open/WEP APs, 2.4 GHz
+  1/6/11 least-overlap estimate, 2.4 GHz wide-channel flags.
+- **Auto scans**: optional scan attempts every 40 seconds while foregrounded. Android can throttle scans.
+- **CSV scan export**: save the current scan's detailed AP data.
+- **Connected device**: shows the phone's Wi-Fi SSID/IP/RSSI when Android permits.
+
+The new Analyzer does not touch existing saved JPG floor plans/survey data. This is
+still an Android-phone-radio analyzer, *not* direct Sidekick 2 RF access. The dedicated
+spectrum analyzer, calibration, noise floor, packet capture, Wi-Fi 6 GHz channel coverage,
+and interference readings require a compatible Sidekick SDK/interface and external hardware.

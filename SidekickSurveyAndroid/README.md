@@ -1,4 +1,4 @@
-# Sidekick Survey Android – JPG heatmaps (v0.3)
+# Sidekick Survey Android – JPG heatmaps (v0.8)
 
 A working **Android Wi-Fi survey prototype** that records the phone's Wi-Fi scan results at manually selected positions on an imported JPG/PNG floor plan. This is a separate project from the older ZIP-based Wi-Fi Analyzer in the repository.
 
@@ -120,3 +120,11 @@ JPG from v0.1 and import it in v0.3 if needed. Keep v0.1 installed until migrate
 - Import limit 2 MB, optimized inventory list via Android ListView; all data stays local.
 - To produce an exact BSSID-to-AP-name/IP mapping from an Aruba controller, consider capturing `show ap bss-table` and converting it to a CSV of `name,IP,wiredMAC,BSSID`, or manually link scanned BSSIDs from this app. The imported file alone does not change the tablet roaming behavior.
 - v0.7 has its own package ID and stores inventory and maps separately from v0.6, preserving earlier installs.
+
+## v0.8 — Clear imported device/IP/MAC list
+- **Clear ALL Imported APs (Device / IP / MAC)** on the Aruba AP Inventory screen. Confirms the exact number of imported APs and BSSID links before saving an empty `aruba_ap_inventory.json` file and refreshing the list. The control is disabled when the list is empty.
+- Tap an imported AP, then **Remove this device from imported list** to selectively delete just that entry and its BSSID mappings. Asks for confirmation.
+- No changes to the current survey JPG, survey points, AP map pins, manually verified map positions, or editable pin notes.
+- Import TXT/CSV again to reload a list. Import **Replace** is also available.
+- v0.8 has its own package ID and installs alongside v0.7. The earlier install's imported list is retained separately; file data is not migrated.
+- Successful GitHub Action builds publish the v0.8 APK to `apks/Sidekick-Survey-Android-v0.8.apk`.

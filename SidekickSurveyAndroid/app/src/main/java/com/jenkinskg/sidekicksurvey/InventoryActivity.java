@@ -29,6 +29,7 @@ public class InventoryActivity extends Activity {
     private static final int PICK_FILE=701;
     private final ArrayList<InventoryStore.Entry> entries=new ArrayList<>();
     private TextView summary;
+    private Button clearListButton;
     private ListView list;
     private WifiManager wifi;
     private int dp(int i){return (int)(i*getResources().getDisplayMetrics().density+0.5f);}
@@ -41,7 +42,7 @@ public class InventoryActivity extends Activity {
         LinearLayout layout=new LinearLayout(this);layout.setOrientation(LinearLayout.VERTICAL);
         setContentView(layout);
         TextView title=new TextView(this);
-        title.setText("Aruba AP Inventory  •  v0.7");title.setTextSize(21);title.setPadding(dp(12),dp(10),dp(12),dp(8));
+        title.setText("Aruba AP Inventory  •  v0.8");title.setTextSize(21);title.setPadding(dp(12),dp(10),dp(12),dp(8));
         layout.addView(title);
         TextView info=new TextView(this);
         info.setText("Import AP name, wired MAC and IP from a TXT/CSV. Tap an AP to link an observed Wi-Fi BSSID. No guessed MAC-to-BSSID matches.");
@@ -50,10 +51,59 @@ public class InventoryActivity extends Activity {
         buttons.addView(button("Import TXT/CSV",v->pick()),new LinearLayout.LayoutParams(0,dp(50),1));
         buttons.addView(button("Back to map",v->finish()),new LinearLayout.LayoutParams(0,dp(50),1));
         layout.addView(buttons);
+        // Clear only the imported device/name + IP + MAC inventory, never the survey.
+        clearListButton=button("Clear ALL Imported APs (Device / IP / MAC)",v->confirmClearImportedList());
+        layout.addView(clearListButton,new LinearLayout.LayoutParams(-1,dp(50)));
         summary=new TextView(this);summary.setPadding(dp(12),dp(9),dp(12),dp(9));layout.addView(summary);
         list=new ListView(this);layout.addView(list,new LinearLayout.LayoutParams(-1,0,1));
         list.setOnItemClickListener((parent,view,pos,id)->showActions(entries.get(pos)));
         entries.addAll(InventoryStore.load(this));redraw();
+    }
+    private void confirmClearImportedList(){
+        if(entries.isEmpty()){
+            Toast.makeText(this,"The imported AP list is already empty.",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final int count=entries.size();
+        int links=0;
+        for(InventoryStore.Entry e:entries)links+=e.bssids.size();
+        new AlertDialog.Builder(this)
+            .setTitle("Clear imported AP inventory?")
+            .setMessage("Permanently remove all "+count+" imported device / IP / MAC records and "+
+                links+" BSSID mappings?\n\nYour JPG floor plan, survey measurements, and AP map pins/notes are NOT deleted.")
+            .setPositiveButton("Clear "+count+" devices",(dialog,which)->clearImportedList())
+            .setNegativeButton("Cancel",null)
+            .show();
+    }
+    private void clearImportedList(){
+        try{
+            // Persist an empty list first; then update UI. Previous list remains if disk write fails.
+            InventoryStore.save(this,new ArrayList<InventoryStore.Entry>());
+            entries.clear();
+            redraw();
+            Toast.makeText(this,"Imported AP list cleared. Survey map kept.",Toast.LENGTH_LONG).show();
+        }catch(Exception e){
+            summary.setText("Could not clear AP list: "+e.getMessage());
+        }
+    }
+    private void confirmRemoveAp(InventoryStore.Entry ap){
+        new AlertDialog.Builder(this)
+            .setTitle("Remove imported AP?")
+            .setMessage("Delete "+ap.displayName()+"\nIP: "+ap.ip+"\nMAC: "+ap.mac+
+                "\n\nRemove this device and all its BSSID links from the imported list? Map and survey points stay intact.")
+            .setPositiveButton("Remove device",(dialog,which)->{
+                ArrayList<InventoryStore.Entry> remaining=new ArrayList<>(entries);
+                remaining.remove(ap);
+                try{
+                    InventoryStore.save(this,remaining);
+                    entries.clear();entries.addAll(remaining);redraw();
+                    Toast.makeText(this,"Imported device removed.",Toast.LENGTH_SHORT).show();
+                }catch(Exception e){
+                    summary.setText("Could not remove AP: "+e.getMessage());
+                }
+            })
+            .setNegativeButton("Cancel",null)
+            .show();
     }
     private void pick(){
         Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -106,7 +156,10 @@ public class InventoryActivity extends Activity {
             links+=e.bssids.size();
             rows[i]=e.displayLine();
         }
-        summary.setText(entries.size()+" imported APs  •  "+links+" BSSID links\nTap any AP to link a scanned BSSID or manually enter one.");
+        summary.setText(entries.isEmpty()
+            ?"Imported AP list is empty. Tap Import TXT/CSV to load your device,ip,mac file."
+            :entries.size()+" imported APs  •  "+links+" BSSID links\nTap an AP to link a BSSID or remove one device.");
+        clearListButton.setEnabled(!entries.isEmpty());
         list.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_list_item_1,rows));
     }
     private void saveAndRefresh(){
@@ -114,12 +167,13 @@ public class InventoryActivity extends Activity {
         catch(Exception e){summary.setText("Inventory save failed: "+e.getMessage());}
     }
     private void showActions(InventoryStore.Entry ap){
-        final String[] choices={"Link detected BSSID","Enter BSSID manually","Remove BSSID link"};
+        final String[] choices={"Link detected BSSID","Enter BSSID manually","Remove BSSID link","Remove this device from imported list"};
         new AlertDialog.Builder(this).setTitle(ap.displayName()+"\nIP "+ap.ip+"  •  "+ap.mac)
             .setItems(choices,(d,i)->{
                 if(i==0)linkScanned(ap);
                 else if(i==1)linkManual(ap);
-                else unlink(ap);
+                else if(i==2)unlink(ap);
+                else if(i==3)confirmRemoveAp(ap);
             }).setNegativeButton("Cancel",null).show();
     }
     private void linkScanned(InventoryStore.Entry ap){

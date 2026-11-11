@@ -5,11 +5,11 @@ android {
     compileSdk 35
 
     defaultConfig {
-        applicationId 'com.jenkinskg.sidekicksurvey.v6'
+        applicationId 'com.jenkinskg.sidekicksurvey.v7'
         minSdk 26
         targetSdk 35
-        versionCode 6
-        versionName '0.6-roaming-monitor'
+        versionCode 7
+        versionName '0.7-aruba-ap-inventory'
     }
 
     buildTypes {

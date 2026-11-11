@@ -45,6 +45,7 @@ public class RoamingActivity extends Activity {
     private WifiManager wifi;
     private TextView currentView, candidateView, otherView, noteView, eventsView, scanView;
     private Button autoButton;
+    private ArrayList<InventoryStore.Entry> importedAps=new ArrayList<>();
     private boolean listening=false, auto=false;
     private String priorBssid=null, priorSsid="";
     private int roamCount=0, freshScanCount=0, cachedScanCount=0;
@@ -129,6 +130,7 @@ public class RoamingActivity extends Activity {
     }
     @Override protected void onResume(){
         super.onResume();
+        importedAps=InventoryStore.load(this);
         if(!listening){
             IntentFilter filter=new IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION);
             if(Build.VERSION.SDK_INT>=33)registerReceiver(scanListener,filter,Context.RECEIVER_NOT_EXPORTED);
@@ -223,6 +225,11 @@ public class RoamingActivity extends Activity {
         for(String item:roamEvents)b.append(item).append('\n');
         eventsView.setText(b.toString());
     }
+    private String apIdentity(String bssid){
+        InventoryStore.Entry ap=InventoryStore.lookup(importedAps,bssid);
+        return ap==null?"(not matched to imported AP list)":
+            ap.displayName()+" • IP "+ap.ip+" • AP wired MAC "+ap.mac;
+    }
     private void render(){
         if(scanView==null||wifi==null)return;
         WifiInfo connected=null;
@@ -255,6 +262,7 @@ public class RoamingActivity extends Activity {
         if(!associated)currentView.setText("CURRENT AP: Not connected / BSSID hidden\nEnable Wi-Fi and precise Location permission.");
         else currentView.setText("CURRENT AP\nSSID: "+ssid+
             "\nBSSID: "+bssid.toUpperCase(Locale.US)+
+            "\nInventory: "+apIdentity(bssid)+
             "\nSignal: "+signal+" dBm  •  "+frequency+" MHz");
 
         AccessPoint strongest=scanAps.isEmpty()?null:scanAps.get(0);
@@ -267,7 +275,8 @@ public class RoamingActivity extends Activity {
         }
         otherView.setText(strongest==null?"STRONGEST VISIBLE AP: No scan data":
             "STRONGEST VISIBLE AP (any SSID)\n"+strongest.ssid+
-            "  •  "+strongest.bssid+"  •  "+strongest.dbm+" dBm");
+            "  •  "+strongest.bssid+"  •  "+strongest.dbm+" dBm"+
+            "\nInventory: "+apIdentity(strongest.bssid));
 
         if(bestSame==null){
             candidateView.setText("BEST AP ON CURRENT SSID: no matching BSSID in recent scan.");
@@ -275,7 +284,8 @@ public class RoamingActivity extends Activity {
             return;
         }
         candidateView.setText("STRONGEST SCANNED AP ON CURRENT SSID\n"+
-            bestSame.bssid+"  •  "+bestSame.dbm+" dBm  •  "+bestSame.mhz+" MHz");
+            bestSame.bssid+"  •  "+bestSame.dbm+" dBm  •  "+bestSame.mhz+" MHz"+
+            "\nInventory: "+apIdentity(bestSame.bssid));
         if(!fresh) {
             noteView.setText("Scan results are cached/old. They cannot establish which AP is strongest NOW.");
         } else if(!associated){

@@ -81,6 +81,7 @@ public class MainActivity extends Activity {
     private boolean pendingSurveyCapture=false;
     private float pendingSurveyX,pendingSurveyY;
     private boolean displayPointLabels=true;
+    private ArrayList<InventoryStore.Entry> importedAps=new ArrayList<>();
     private int freshScanCounter=0;
     private Button pointLabelButton;
     private final Runnable scanCaptureTimeout=()->{
@@ -196,7 +197,7 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.WHITE);
         setContentView(root);
-        TextView title = text("Sidekick Survey  |  v0.6 Wi-Fi Roaming Monitor",20);
+        TextView title = text("Sidekick Survey  |  v0.7 Aruba AP File Import",20);
         title.setTextColor(Color.rgb(16,60,100));
         root.addView(title);
         root.addView(button("Open Wi-Fi Analyzer  •  APs  |  Channels  |  Signal  |  Health",
@@ -214,6 +215,8 @@ public class MainActivity extends Activity {
         sensitivityButton = button("Near: -55 dBm",v->chooseSensitivity());
         addButtons(root,autoScanButton,sensitivityButton,
             button("AP Inventory",v->showApInventory()));
+        root.addView(button("Import / Match Aruba AP MAC + IP List",
+            v->startActivity(new Intent(this,InventoryActivity.class))),new LinearLayout.LayoutParams(-1,dp(46)));
         pointLabelButton=button("Point MAC labels: ON",v->{
             displayPointLabels=!displayPointLabels;
             pointLabelButton.setText(displayPointLabels?"Point MAC labels: ON":"Point MAC labels: OFF");
@@ -258,6 +261,8 @@ public class MainActivity extends Activity {
     }
     @Override public void onResume() {
         super.onResume();
+        importedAps=InventoryStore.load(this);
+        if(map!=null)map.invalidate();
         if(usbStatus!=null)updateUsb();
         scanHandler.removeCallbacks(scanLoop);
         if(autoScan)scanHandler.postDelayed(scanLoop,45000L);
@@ -570,7 +575,10 @@ public class MainActivity extends Activity {
         String[] names=new String[list.size()];
         for(int i=0;i<list.size();i++){
             ApMarker m=list.get(i);
-            names[i]=m.name()+" | "+m.bssid+" | "+m.bestDbm+" dBm"+(m.verified?" ✓ verified":"");
+            InventoryStore.Entry entry=linkedAp(m.bssid);
+            names[i]=m.name()+" | "+m.bssid+
+                (entry==null?" | Unmapped":" | "+entry.displayName()+" "+entry.ip)+
+                " | "+m.bestDbm+" dBm"+(m.verified?" ✓ verified":"");
         }
         new AlertDialog.Builder(this).setTitle("AP Inventory ("+list.size()+")")
             .setItems(names,(dialog,which)->showApActions(list.get(which)))
@@ -724,10 +732,20 @@ public class MainActivity extends Activity {
         parent.addView(e);
         return e;
     }
+    private InventoryStore.Entry linkedAp(String bssid){
+        return InventoryStore.lookup(importedAps,bssid);
+    }
+    private String inventoryLabel(String bssid) {
+        InventoryStore.Entry entry=linkedAp(bssid);
+        return entry==null?"":entry.displayName()+"  IP "+entry.ip;
+    }
     private void editApMarker(ApMarker m) {
         LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);
         form.setPadding(dp(16),dp(8),dp(16),dp(8));
+        InventoryStore.Entry linked=linkedAp(m.bssid);
         form.addView(text("SSID: "+m.ssid+"\nBSSID / MAC: "+m.bssid+
+            (linked==null?"\nInventory: NOT MATCHED. Link BSSID in Import AP List.":
+              "\nImported AP: "+linked.displayName()+"\nIP: "+linked.ip+"\nWired MAC: "+linked.mac)+
             "\nPeak RSSI: "+m.bestDbm+" dBm ("+m.frequency+" MHz)"+
             "\nPosition: "+(m.pinned?"Manually positioned":"Estimated from strongest survey reading"),12));
         EditText name=field(form,"AP name / hostname",m.apName,false);
@@ -1006,6 +1024,8 @@ public class MainActivity extends Activity {
                             p.setTextAlign(Paint.Align.LEFT);p.setTextSize(fs);
                             String line1=label+"  "+ap.dbm+" dBm"+(s.fresh?"":" [cached]");
                             String line2=ap.bssid.toUpperCase(Locale.US);
+            InventoryStore.Entry identified=linkedAp(ap.bssid);
+            if(identified!=null)line1=identified.displayName()+"  "+ap.dbm+" dBm";
                             float boxWidth=Math.max(p.measureText(line1),p.measureText(line2))+dp(8);
                             float bx=x+pointRadius+dp(2),by=y+pointRadius+dp(2);
                             p.setColor(Color.argb(236,248,250,255));
@@ -1034,14 +1054,23 @@ public class MainActivity extends Activity {
                     String mac=m.bssid.toUpperCase(Locale.US);
                     float tx=x+radius+dp(3),ty=y-radius*0.2f;
                     p.setTextSize(font);p.setTextAlign(Paint.Align.LEFT);
-                    float tw=Math.max(p.measureText(name),p.measureText(mac));
+                    InventoryStore.Entry matched=linkedAp(m.bssid);
+                    String effectiveName=(matched!=null&&m.apName.isEmpty()&&!matched.name.isEmpty())?matched.displayName():name;
+                    if(effectiveName.length()>22)effectiveName=effectiveName.substring(0,21)+"…";
+                    String line2=matched==null?mac:(matched.ip+"  "+mac);
+                    float tw=Math.max(p.measureText(effectiveName),p.measureText(line2));
                     p.setColor(Color.argb(225,255,255,255));
                     c.drawRoundRect(new RectF(tx-dp(2),ty-font-dp(2),tx+tw+dp(3),ty+font+dp(5)),
                         dp(3),dp(3),p);
                     p.setColor(Color.BLACK);
-                    c.drawText(name,tx,ty,p);
+                    InventoryStore.Entry imported=linkedAp(m.bssid);
+                    if(imported!=null&&m.apName.isEmpty()&&!imported.name.isEmpty()){
+                        String importedName=imported.displayName();
+                        if(importedName.length()>22)importedName=importedName.substring(0,21)+"…";
+                        c.drawText(importedName,tx,ty,p);
+                    } else c.drawText(name,tx,ty,p);
                     p.setTextSize(font*0.87f);
-                    c.drawText(mac,tx,ty+font,p);
+                    c.drawText(imported==null?mac:(imported.ip+"  "+mac),tx,ty+font,p);
                 }
             }
         }

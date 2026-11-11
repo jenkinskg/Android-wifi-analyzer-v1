@@ -110,3 +110,13 @@ JPG from v0.1 and import it in v0.3 if needed. Keep v0.1 installed until migrate
 - A scan older than 90 seconds is labeled stale; no current-roam recommendation from stale scan results.
 - **Never** disconnect, force reconnect, toggle Wi-Fi, or claim to control system roaming; Android restricts those capabilities and forcing a handoff every 500ms is disruptive. Optional Wi-Fi Settings opens the standard system UI.
 - Version v0.6 has its own package ID and does not overwrite or import the v0.5 private survey data. Field testing required.
+
+## v0.7 — import Aruba AP inventory from TXT / CSV
+- Open **Import / Match Aruba AP MAC + IP List** from the survey map.
+- Supports ASCII/UTF-8 TXT or CSV with comma, semicolon, tab or whitespace-separated columns in flexible order, e.g. `AP-WEST,10.224.67.119,64:9e:f3:b3:7a:73`, `64:9e:f3:b3:7a:73 10.224.67.119 AP-WEST`, Cisco `649e.f3b3.7a73), and optional additional BSSID.
+- Records AP **wired MAC, IP, name**. Import can merge to preserve existing BSSID mappings or replace the inventory.
+- Exact wired-MAC/BSSID matching occurs automatically. Otherwise, tap an imported AP to **manually link a scanned or typed BSSID**. Never infer Aruba radio BSSID from wired MAC numeric offsets.
+- Matched AP details show IP/name on annotated map pins, AP details, AP Inventory, and the 500ms Roaming Monitor.
+- Import limit 2 MB, optimized inventory list via Android ListView; all data stays local.
+- To produce an exact BSSID-to-AP-name/IP mapping from an Aruba controller, consider capturing `show ap bss-table` and converting it to a CSV of `name,IP,wiredMAC,BSSID`, or manually link scanned BSSIDs from this app. The imported file alone does not change the tablet roaming behavior.
+- v0.7 has its own package ID and stores inventory and maps separately from v0.6, preserving earlier installs.

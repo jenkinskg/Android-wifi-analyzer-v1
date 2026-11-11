@@ -82,6 +82,14 @@ public class MainActivity extends Activity {
     private float pendingSurveyX,pendingSurveyY;
     private boolean displayPointLabels=true;
     private ArrayList<InventoryStore.Entry> importedAps=new ArrayList<>();
+    private final java.util.HashMap<String,InventoryStore.Entry> inventoryIndex=new java.util.HashMap<>();
+    private void rebuildInventoryIndex(){
+        inventoryIndex.clear();
+        for(InventoryStore.Entry ap:importedAps){
+            inventoryIndex.put(ap.mac,ap);
+            for(String bssid:ap.bssids)inventoryIndex.put(bssid,ap);
+        }
+    }
     private int freshScanCounter=0;
     private Button pointLabelButton;
     private final Runnable scanCaptureTimeout=()->{
@@ -262,6 +270,7 @@ public class MainActivity extends Activity {
     @Override public void onResume() {
         super.onResume();
         importedAps=InventoryStore.load(this);
+        rebuildInventoryIndex();
         if(map!=null)map.invalidate();
         if(usbStatus!=null)updateUsb();
         scanHandler.removeCallbacks(scanLoop);
@@ -733,7 +742,7 @@ public class MainActivity extends Activity {
         return e;
     }
     private InventoryStore.Entry linkedAp(String bssid){
-        return InventoryStore.lookup(importedAps,bssid);
+        return inventoryIndex.get(InventoryStore.normalizeMac(bssid));
     }
     private String inventoryLabel(String bssid) {
         InventoryStore.Entry entry=linkedAp(bssid);

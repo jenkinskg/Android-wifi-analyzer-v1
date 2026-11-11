@@ -46,6 +46,14 @@ public class RoamingActivity extends Activity {
     private TextView currentView, candidateView, otherView, noteView, eventsView, scanView;
     private Button autoButton;
     private ArrayList<InventoryStore.Entry> importedAps=new ArrayList<>();
+    private final java.util.HashMap<String,InventoryStore.Entry> inventoryIndex=new java.util.HashMap<>();
+    private void rebuildInventoryIndex(){
+        inventoryIndex.clear();
+        for(InventoryStore.Entry ap:importedAps){
+            inventoryIndex.put(ap.mac,ap);
+            for(String bssid:ap.bssids)inventoryIndex.put(bssid,ap);
+        }
+    }
     private boolean listening=false, auto=false;
     private String priorBssid=null, priorSsid="";
     private int roamCount=0, freshScanCount=0, cachedScanCount=0;
@@ -131,6 +139,7 @@ public class RoamingActivity extends Activity {
     @Override protected void onResume(){
         super.onResume();
         importedAps=InventoryStore.load(this);
+        rebuildInventoryIndex();
         if(!listening){
             IntentFilter filter=new IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION);
             if(Build.VERSION.SDK_INT>=33)registerReceiver(scanListener,filter,Context.RECEIVER_NOT_EXPORTED);
@@ -226,7 +235,7 @@ public class RoamingActivity extends Activity {
         eventsView.setText(b.toString());
     }
     private String apIdentity(String bssid){
-        InventoryStore.Entry ap=InventoryStore.lookup(importedAps,bssid);
+        InventoryStore.Entry ap=inventoryIndex.get(InventoryStore.normalizeMac(bssid));
         return ap==null?"(not matched to imported AP list)":
             ap.displayName()+" • IP "+ap.ip+" • AP wired MAC "+ap.mac;
     }

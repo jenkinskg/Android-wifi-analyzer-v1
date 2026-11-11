@@ -427,6 +427,8 @@ public class MainActivity extends Activity {
         status.setText("Point "+samples.size()+" saved; "+placed+" new AP pins, "+apMarkers.size()+" total."+stale);
     }
     private int placeNearbyAps(Sample s) {
+        // Never infer a new AP pin from a stale or unconfirmed Android scan.
+        if(lastCompletedScan==0 || System.currentTimeMillis()-lastCompletedScan>120000L)return 0;
         int added=0;
         // Samples are already sorted strongest-first. Never create an unlimited pile
         // of AP pins at a single point. Existing estimates can improve at any point.
@@ -440,7 +442,7 @@ public class MainActivity extends Activity {
                 apMarkers.put(key,m);
                 added++;
             } else {
-                if(r.dbm>m.bestDbm+2 && !m.pinned) {
+                if(r.dbm>m.bestDbm+2 && !m.pinned && !m.verified) {
                     m.x=s.x;m.y=s.y;
                 }
                 if(r.dbm>m.bestDbm){m.bestDbm=r.dbm;m.frequency=r.mhz;}

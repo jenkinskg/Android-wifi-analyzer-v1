@@ -1,0 +1,52 @@
+name: Sidekick Windows EXE
+on:
+  push:
+    branches: [sidekick-jpg-survey]
+    paths:
+      - 'SidekickSurveyWindows/**'
+      - '.github/workflows/sidekick-survey-windows.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: SidekickSurveyWindows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+      - name: Python syntax and WLAN struct sanity check
+        shell: pwsh
+        run: |
+          python -m py_compile app.py wlan_native.py
+          python -c "import ctypes as C; import wlan_native as x; assert C.sizeof(x.WLAN_BSS_ENTRY) == 360"
+      - name: Build single-file Windows application
+        shell: pwsh
+        run: |
+          python -m PyInstaller --clean --noconfirm --onefile --windowed --name Sidekick-Survey-Windows-v1.0 --collect-all PIL app.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sidekick-Survey-Windows-v1.0-EXE
+          path: SidekickSurveyWindows/dist/Sidekick-Survey-Windows-v1.0.exe
+      - name: Publish direct EXE download in GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: \${{ github.token }}
+        run: |
+          $tag = 'sidekick-windows-v1.0'
+          $exe = 'dist/Sidekick-Survey-Windows-v1.0.exe'
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $exe --clobber --repo $env:GITHUB_REPOSITORY
+          } else {
+            gh release create $tag $exe --repo $env:GITHUB_REPOSITORY --target sidekick-jpg-survey --title "Sidekick Survey Windows v1.0" --notes "Initial Windows Wi-Fi Stop & Go floor-plan survey with native adapter selection and wireless-BSSID AP lookup. Unsigned EXE; on-device WLAN testing required."
+          }

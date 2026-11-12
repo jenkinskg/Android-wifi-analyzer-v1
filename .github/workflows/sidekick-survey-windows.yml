@@ -40,7 +40,7 @@ jobs:
       - name: Publish direct EXE download in GitHub Release
         shell: pwsh
         env:
-          GH_TOKEN: \${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           $tag = 'sidekick-windows-v1.0'
           $exe = 'dist/Sidekick-Survey-Windows-v1.0.exe'

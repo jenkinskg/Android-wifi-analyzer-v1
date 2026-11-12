@@ -11,7 +11,7 @@ Features:
 - Export floor-plan JPG and all AP observations to CSV. Local auto-save to APPDATA/SidekickSurveyWindows.
 - Do not disconnect or force the connection to a different AP. Windows roaming is managed by the operating system.
 
-Download the EXE from the successful GitHub Actions run artifact named Sidekick-Survey-Windows-v1.0-EXE in the Sidekick Windows EXE workflow. The repository's standard Actions token is not authorized to publish GitHub Release assets, so no release URL is promised. A verified standalone EXE is also available from the ChatGPT conversation in which it was built.
+Direct Windows EXE download: https://github.com/jenkinskg/Android-wifi-analyzer-v1/releases/download/sidekick-windows-v1.0/Sidekick-Survey-Windows-v1.0.exe
 
 Example list:
 device,ip,mac

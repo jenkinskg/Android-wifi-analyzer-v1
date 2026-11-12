@@ -37,3 +37,16 @@ jobs:
         with:
           name: Sidekick-Survey-Windows-v1.0-EXE
           path: SidekickSurveyWindows/dist/Sidekick-Survey-Windows-v1.0.exe
+      - name: Publish direct EXE download in GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'sidekick-windows-v1.0'
+          $exe = 'dist/Sidekick-Survey-Windows-v1.0.exe'
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $exe --clobber --repo $env:GITHUB_REPOSITORY
+          } else {
+            gh release create $tag $exe --repo $env:GITHUB_REPOSITORY --target sidekick-jpg-survey --title "Sidekick Survey Windows v1.0" --notes "Initial Windows Wi-Fi Stop & Go floor-plan survey with native adapter selection and wireless-BSSID AP lookup. Unsigned EXE; on-device WLAN testing required."
+          }

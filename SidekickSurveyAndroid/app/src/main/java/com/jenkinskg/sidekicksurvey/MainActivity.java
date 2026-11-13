@@ -837,31 +837,58 @@ public class MainActivity extends Activity {
     private void removeSample(Sample s) {
         if(samples.remove(s))onSurveyChanged("Survey point removed");
     }
+    // Point inspection always uses the stored snapshot, never the phone's current scan.
     private void showSampleActions(Sample s) {
         if(s==null)return;
         int index=samples.indexOf(s);
         if(index<0)return;
-        String stamp=new SimpleDateFormat("HH:mm:ss",Locale.US).format(new Date(s.timestamp));
-        Reading ap=s.displayedAp();
-        String detail=ap==null?"No AP":ap.ssid+"\n"+ap.bssid+"  "+ap.dbm+" dBm";
-        String dwell="";
+        ArrayList<Reading> recorded=new ArrayList<>(s.readings);
+        recorded.sort((a,b)->Integer.compare(b.dbm,a.dbm));
+        Reading strongest=s.strongest();
+        SimpleDateFormat fmt=new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.US);
+        StringBuilder details=new StringBuilder();
+        details.append("Recorded: ").append(fmt.format(new Date(s.timestamp)))
+            .append("\\nScan: ").append(s.fresh?"FRESH":"CACHED / CONNECTED ONLY")
+            .append("\\nMeasurements: ").append(recorded.size()).append(" BSSIDs");
+        if(strongest!=null){
+            details.append("\\n\\nSTRONGEST ACCESS POINT")
+                .append("\\n").append(strongest.ssid.isEmpty()?"<hidden SSID>":strongest.ssid)
+                .append("  •  ").append(strongest.dbm).append(" dBm")
+                .append("\\nBSSID: ").append(strongest.bssid)
+                .append("\\nChannel: ").append(channel(strongest.mhz))
+                .append("  •  ").append(strongest.mhz).append(" MHz");
+            InventoryStore.Entry entry=inventoryIndex.get(InventoryStore.normalizeMac(strongest.bssid));
+            if(entry!=null)details.append("\\nInventory: ").append(entry.displayName())
+                .append("  •  IP ").append(entry.ip.isEmpty()?"unknown":entry.ip);
+        }else details.append("\\n\\nNo AP readings stored.");
         if("STOP_GO".equals(s.mode)){
-            dwell="\nStop & Go: "+s.dwellSeconds+"s • "+s.connectedSamples+" live RSSI polls"+
-                "\nConnected BSSID: "+s.connectedBssid+
-                "\nConnected RSSI: avg "+s.connectedAvg+" dBm, min "+s.connectedMin+
-                ", max "+s.connectedMax+" dBm"+
-                "\nFrequency: "+s.connectedFreq+" MHz • Link "+s.connectedLinkMbps+" Mbps"+
-                "\nBSSID changes during dwell: "+s.connectedRoams+
-                (s.connectedOnly?"\nCONNECTED ONLY: No fresh full Wi-Fi scan":"");
+            details.append("\\n\\nSTOP & GO: ").append(s.dwellSeconds).append(" seconds")
+                .append("  •  ").append(s.connectedSamples).append(" live samples")
+                .append("\\nConnected RSSI avg/min/max: ").append(s.connectedAvg).append("/")
+                .append(s.connectedMin).append("/").append(s.connectedMax).append(" dBm")
+                .append("\\nRoams: ").append(s.connectedRoams);
+            if(s.connectedOnly)details.append("\\nOnly connected AP was measured; no fresh full scan.");
         }
-        new AlertDialog.Builder(this).setTitle("Survey point "+(index+1))
-            .setMessage("Recorded at "+stamp+"  •  "+(s.fresh?"FRESH":"NO FRESH SCAN")+
-                "\nStrongest/selected AP: "+detail+
-                dwell+
-                "\nSeen: "+s.readings.size()+" BSSIDs. Choose another AP from those seen, or remove this point.")
-            .setPositiveButton("Choose AP",(d,w)->choosePointAp(s))
+        details.append("\\n\\nALL RECORDED ACCESS POINTS (strongest first)");
+        for(Reading reading:recorded){
+            details.append("\\n\\n").append(reading.ssid.isEmpty()?"<hidden SSID>":reading.ssid)
+                .append("  •  ").append(reading.dbm).append(" dBm")
+                .append("\\n").append(reading.bssid)
+                .append("  •  Ch ").append(channel(reading.mhz))
+                .append("  •  ").append(reading.mhz).append(" MHz");
+            InventoryStore.Entry entry=inventoryIndex.get(InventoryStore.normalizeMac(reading.bssid));
+            if(entry!=null)details.append("\\n").append(entry.displayName())
+                .append("  •  ").append(entry.ip.isEmpty()?"IP unknown":entry.ip);
+        }
+        ScrollView scroll=new ScrollView(this);
+        TextView content=text(details.toString(),14);
+        content.setTextIsSelectable(true);
+        scroll.addView(content);
+        new AlertDialog.Builder(this).setTitle("Survey point "+(index+1)+" • Saved RSSI")
+            .setView(scroll)
+            .setPositiveButton("Choose displayed AP",(d,w)->choosePointAp(s))
             .setNeutralButton("Remove point",(d,w)->confirmAction("Remove point","Remove this survey point?",()->removeSample(s)))
-            .setNegativeButton("Cancel",null).show();
+            .setNegativeButton("Close",null).show();
     }
     private void choosePointAp(Sample sample) {
         ArrayList<Reading> options=new ArrayList<>();
